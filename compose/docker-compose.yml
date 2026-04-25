@@ -1,5 +1,14 @@
 name: food-delivery
 
+# Network segmentation
+# -------------------
+# public-net          frontend (and a future ingress)
+# app-net             frontend + every backend service for HTTP RPC
+# rabbit-net          rabbitmq + every backend service that messages
+# <svc>-data-net      one per service, joining only that service to its
+#                     own datastore. DBs/caches live ONLY on their data-net
+#                     so they cannot be reached from the app or the broker.
+
 x-jwt-volume: &jwt-volume
   type: bind
   source: ./jwt
@@ -25,6 +34,8 @@ services:
       - users-db-data:/var/lib/postgresql/data
       - ../services/user-service/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck: *postgres-healthcheck
+    networks:
+      - users-data-net
 
   orders-db:
     image: postgres:16-alpine
@@ -36,6 +47,8 @@ services:
       - orders-db-data:/var/lib/postgresql/data
       - ../services/order-service/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck: *postgres-healthcheck
+    networks:
+      - orders-data-net
 
   payments-db:
     image: postgres:16-alpine
@@ -47,6 +60,8 @@ services:
       - payments-db-data:/var/lib/postgresql/data
       - ../services/payment-service/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck: *postgres-healthcheck
+    networks:
+      - payments-data-net
 
   restaurants-db:
     image: mongo:7
@@ -61,6 +76,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      - restaurants-data-net
 
   orders-cache:
     image: redis:7-alpine
@@ -72,6 +89,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      - orders-data-net
 
   # --- shared message broker ---------------------------------------------------
 
@@ -87,6 +106,8 @@ services:
       interval: 10s
       timeout: 10s
       retries: 20
+    networks:
+      - rabbit-net
 
   # --- application services ----------------------------------------------------
 
@@ -103,6 +124,10 @@ services:
     depends_on:
       users-db:
         condition: service_healthy
+    networks:
+      - app-net
+      - rabbit-net
+      - users-data-net
 
   restaurant-service:
     image: ${REGISTRY:-food-delivery}/restaurant-service:${IMAGE_TAG:-latest}
@@ -117,6 +142,10 @@ services:
     depends_on:
       restaurants-db:
         condition: service_healthy
+    networks:
+      - app-net
+      - rabbit-net
+      - restaurants-data-net
 
   order-service:
     image: ${REGISTRY:-food-delivery}/order-service:${IMAGE_TAG:-latest}
@@ -141,6 +170,10 @@ services:
         condition: service_healthy
       restaurant-service:
         condition: service_started
+    networks:
+      - app-net
+      - rabbit-net
+      - orders-data-net
 
   payment-service:
     image: ${REGISTRY:-food-delivery}/payment-service:${IMAGE_TAG:-latest}
@@ -158,6 +191,10 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - app-net
+      - rabbit-net
+      - payments-data-net
 
   frontend:
     image: ${REGISTRY:-food-delivery}/frontend:${IMAGE_TAG:-latest}
@@ -184,6 +221,24 @@ services:
         condition: service_started
       payment-service:
         condition: service_started
+    networks:
+      - public-net
+      - app-net
+
+networks:
+  public-net:
+  app-net:
+    internal: true
+  rabbit-net:
+    internal: true
+  users-data-net:
+    internal: true
+  orders-data-net:
+    internal: true
+  payments-data-net:
+    internal: true
+  restaurants-data-net:
+    internal: true
 
 volumes:
   users-db-data:
