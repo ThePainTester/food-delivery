@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
 
 def load_settings() -> Settings:
-    return Settings()
+    return Settings()  # type: ignore
 
 
 def read_public_key(path: str) -> bytes:

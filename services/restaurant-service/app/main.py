@@ -14,7 +14,9 @@ from .errors import (
 from .routers import menu, restaurants
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
 
 
 @asynccontextmanager
@@ -33,9 +35,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Restaurant Service", lifespan=lifespan)
 
-app.add_exception_handler(HTTPException, http_exception_handler)
-app.add_exception_handler(RequestValidationError, validation_handler)
-app.add_exception_handler(Exception, unhandled_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)  # type: ignore
+app.add_exception_handler(Exception, unhandled_exception_handler)  # type: ignore
+app.add_exception_handler(RequestValidationError, validation_handler)  # type: ignore
 
 app.include_router(restaurants.router)
 app.include_router(menu.router)

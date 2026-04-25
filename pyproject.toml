@@ -1,0 +1,5 @@
+[tool.pyright]
+venvPath = "./services/restaurant-service/"
+venv = ".venv"
+include = ["app"]
+pythonVersion = "3.12"

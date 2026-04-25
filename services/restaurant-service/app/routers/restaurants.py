@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from ..auth import Principal, require_auth, require_role
 from ..errors import forbidden, not_found
-from ..schemas import Restaurant, RestaurantCreate, RestaurantUpdate
+from ..schemas import (
+    Restaurant,
+    RestaurantCreate,
+    RestaurantOwner,
+    RestaurantPublic,
+    RestaurantUpdate,
+)
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
 
@@ -14,7 +20,7 @@ def _db(request: Request):
     return request.app.state.mongo.db
 
 
-@router.get("", response_model=list[Restaurant])
+@router.get("", response_model=list[RestaurantPublic])
 async def list_restaurants(
     request: Request,
     cuisine: str | None = Query(None),
@@ -29,15 +35,31 @@ async def list_restaurants(
     if search:
         q["name"] = {"$regex": search, "$options": "i"}
     cursor = _db(request).restaurants.find(q)
-    return [Restaurant.model_validate(doc) async for doc in cursor]
+    return [RestaurantPublic.model_validate(doc) async for doc in cursor]
 
 
-@router.get("/{restaurant_id}", response_model=Restaurant)
+@router.get("/{restaurant_id}", response_model=RestaurantPublic)
 async def get_restaurant(restaurant_id: UUID, request: Request):
     doc = await _db(request).restaurants.find_one({"_id": restaurant_id})
     if not doc:
         raise not_found("restaurant not found")
-    return Restaurant.model_validate(doc)
+    return RestaurantPublic.model_validate(doc)
+
+
+@router.get("/{restaurant_id}/owner", response_model=RestaurantOwner)
+async def get_owner(
+    restaurant_id: UUID,
+    request: Request,
+    _: Principal = Depends(require_auth),
+):
+    """Authenticated lookup so peer services (e.g. Order Service) can verify
+    ownership without exposing owner_id on the public restaurant resource."""
+    doc = await _db(request).restaurants.find_one(
+        {"_id": restaurant_id}, {"owner_id": 1}
+    )
+    if not doc:
+        raise not_found("restaurant not found")
+    return RestaurantOwner(restaurant_id=restaurant_id, owner_id=doc["owner_id"])
 
 
 @router.post("", response_model=Restaurant, status_code=status.HTTP_201_CREATED)
