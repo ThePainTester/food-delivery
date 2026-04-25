@@ -1,5 +1,3 @@
-name: food-delivery
-
 # Dev override: build images locally, expose every port to the host, no restart loops.
 
 services:
@@ -50,5 +48,5 @@ services:
     build:
       context: ../services/frontend
     image: food-delivery/frontend:dev
-    ports: ["8080:80"]
+    ports: ["3000:80"]
     restart: "no"
