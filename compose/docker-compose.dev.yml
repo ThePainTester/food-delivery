@@ -45,3 +45,10 @@ services:
     image: food-delivery/payment-service:dev
     ports: ["8084:8080"]
     restart: "no"
+
+  frontend:
+    build:
+      context: ../services/frontend
+    image: food-delivery/frontend:dev
+    ports: ["8080:80"]
+    restart: "no"

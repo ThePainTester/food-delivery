@@ -90,3 +90,15 @@ services:
     restart: always
     logging: *logging
     deploy: *app-deploy
+
+  frontend:
+    image: ${REGISTRY}/frontend:${IMAGE_TAG}
+    restart: always
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+    deploy:
+      resources:
+        limits:     { cpus: "0.5", memory: 256M }
+        reservations: { cpus: "0.1", memory: 64M }

@@ -38,3 +38,8 @@ services:
     image: ${REGISTRY}/payment-service:${IMAGE_TAG:-staging}
     restart: unless-stopped
     ports: ["8084:8080"]
+
+  frontend:
+    image: ${REGISTRY}/frontend:${IMAGE_TAG:-staging}
+    restart: unless-stopped
+    ports: ["80:80"]

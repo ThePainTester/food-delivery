@@ -159,6 +159,32 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  frontend:
+    image: ${REGISTRY:-food-delivery}/frontend:${IMAGE_TAG:-latest}
+    environment:
+      USER_SERVICE_HOST: user-service
+      USER_SERVICE_PORT: "8080"
+      RESTAURANT_SERVICE_HOST: restaurant-service
+      RESTAURANT_SERVICE_PORT: "8080"
+      ORDER_SERVICE_HOST: order-service
+      ORDER_SERVICE_PORT: "8080"
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      user-service:
+        condition: service_started
+      restaurant-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+
 volumes:
   users-db-data:
   orders-db-data:
