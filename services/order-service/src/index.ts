@@ -1,10 +1,14 @@
+import { RestaurantClient } from "./clients/restaurants";
 import { loadConfig } from "./config";
 import { startConsumers } from "./consumers";
 import { createPool } from "./db";
 import { logger } from "./logger";
 import { Rabbit } from "./rabbit";
 import { createRedis } from "./redis";
+import { OrdersRepo } from "./repositories/orders";
 import { buildApp } from "./server";
+import { LocationService } from "./services/location";
+import { OrdersService } from "./services/orders";
 
 async function main() {
   const cfg = loadConfig();
@@ -13,9 +17,15 @@ async function main() {
 
   const rabbit = new Rabbit(cfg.rabbitUrl, "order-service", "order");
   await rabbit.connect();
-  await startConsumers(rabbit, pool);
 
-  const app = buildApp(cfg, pool, redis, rabbit);
+  const restaurants = new RestaurantClient(cfg.restaurantServiceUrl);
+  const repo = new OrdersRepo(pool);
+  const ordersService = new OrdersService(repo, rabbit, restaurants, cfg.deliveryFeeCents);
+  const locationService = new LocationService(repo, redis, restaurants, cfg.locationTtlSeconds);
+
+  await startConsumers(rabbit, pool, ordersService);
+
+  const app = buildApp({ cfg, orders: ordersService, location: locationService });
   const server = app.listen(cfg.port, () => {
     logger.info({ port: cfg.port }, "order-service listening");
   });

@@ -9,24 +9,27 @@ export type OrderStatus =
   | "CANCELLED";
 
 export type Role = "customer" | "restaurant" | "delivery";
+export type ActorKind = Role | "system";
 
-// Allowed transitions: target status → (from statuses, allowed role)
-const transitions: Record<OrderStatus, { from: OrderStatus[]; role: Role }[]> = {
+// Allowed transitions: target → list of (from-states, allowed actor-kind).
+const transitions: Record<OrderStatus, { from: OrderStatus[]; actor: ActorKind }[]> = {
   PENDING: [],
-  ACCEPTED: [{ from: ["PENDING"], role: "restaurant" }],
-  REJECTED: [{ from: ["PENDING"], role: "restaurant" }],
-  PREPARING: [{ from: ["ACCEPTED"], role: "restaurant" }],
-  READY: [{ from: ["PREPARING"], role: "restaurant" }],
-  PICKED_UP: [{ from: ["READY"], role: "delivery" }],
-  DELIVERED: [{ from: ["PICKED_UP"], role: "delivery" }],
-  CANCELLED: [{ from: ["PENDING"], role: "customer" }],
+  ACCEPTED: [{ from: ["PENDING"], actor: "restaurant" }],
+  REJECTED: [{ from: ["PENDING"], actor: "restaurant" }],
+  PREPARING: [{ from: ["ACCEPTED"], actor: "restaurant" }],
+  READY: [{ from: ["PREPARING"], actor: "restaurant" }],
+  PICKED_UP: [{ from: ["READY"], actor: "delivery" }],
+  DELIVERED: [{ from: ["PICKED_UP"], actor: "delivery" }],
+  CANCELLED: [
+    { from: ["PENDING"], actor: "customer" },
+    { from: ["PENDING"], actor: "system" }, // e.g. payment failure
+  ],
 };
 
 export function canTransition(
   from: OrderStatus,
   to: OrderStatus,
-  role: Role,
+  actor: ActorKind,
 ): boolean {
-  const rules = transitions[to];
-  return rules.some((r) => r.role === role && r.from.includes(from));
+  return transitions[to].some((r) => r.actor === actor && r.from.includes(from));
 }
