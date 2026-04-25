@@ -1,0 +1,47 @@
+name: food-delivery
+
+# Dev override: build images locally, expose every port to the host, no restart loops.
+
+services:
+  users-db:
+    ports: ["5433:5432"]
+  orders-db:
+    ports: ["5434:5432"]
+  payments-db:
+    ports: ["5435:5432"]
+  restaurants-db:
+    ports: ["27017:27017"]
+  orders-cache:
+    ports: ["6379:6379"]
+  rabbitmq:
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  user-service:
+    build:
+      context: ../services/user-service
+    image: food-delivery/user-service:dev
+    ports: ["8081:8080"]
+    restart: "no"
+
+  restaurant-service:
+    build:
+      context: ../services/restaurant-service
+    image: food-delivery/restaurant-service:dev
+    ports: ["8082:8080"]
+    restart: "no"
+
+  order-service:
+    build:
+      context: ../services/order-service
+    image: food-delivery/order-service:dev
+    ports: ["8083:8080"]
+    restart: "no"
+
+  payment-service:
+    build:
+      context: ../services/payment-service
+    image: food-delivery/payment-service:dev
+    ports: ["8084:8080"]
+    restart: "no"

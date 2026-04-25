@@ -1,0 +1,92 @@
+name: food-delivery
+
+# Prod override: tagged images, always-restart, resource limits, log rotation,
+# no host port exposure on data stores or the rabbit management UI.
+#
+# In a real prod environment the data stores are usually managed services
+# (RDS / Atlas / ElastiCache / CloudAMQP). This file keeps them in-compose for
+# parity with the architecture spec; swap to external URLs by setting the
+# *_URL env vars and removing the corresponding services if you go managed.
+
+x-app-deploy: &app-deploy
+  resources:
+    limits:
+      cpus: "1"
+      memory: 512M
+    reservations:
+      cpus: "0.25"
+      memory: 128M
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  users-db:
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits:  { cpus: "2", memory: 1G }
+
+  orders-db:
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits:  { cpus: "2", memory: 1G }
+
+  payments-db:
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits:  { cpus: "2", memory: 1G }
+
+  restaurants-db:
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits:  { cpus: "2", memory: 1G }
+
+  orders-cache:
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 1G }
+
+  user-service:
+    image: ${REGISTRY}/user-service:${IMAGE_TAG}
+    restart: always
+    logging: *logging
+    deploy: *app-deploy
+
+  restaurant-service:
+    image: ${REGISTRY}/restaurant-service:${IMAGE_TAG}
+    restart: always
+    logging: *logging
+    deploy: *app-deploy
+
+  order-service:
+    image: ${REGISTRY}/order-service:${IMAGE_TAG}
+    restart: always
+    logging: *logging
+    deploy: *app-deploy
+
+  payment-service:
+    image: ${REGISTRY}/payment-service:${IMAGE_TAG}
+    restart: always
+    logging: *logging
+    deploy: *app-deploy

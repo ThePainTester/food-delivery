@@ -1,0 +1,168 @@
+name: food-delivery
+
+x-jwt-volume: &jwt-volume
+  type: bind
+  source: ./jwt
+  target: /run/jwt
+  read_only: true
+
+x-postgres-healthcheck: &postgres-healthcheck
+  test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+  interval: 5s
+  timeout: 5s
+  retries: 20
+
+services:
+  # --- per-service data stores -------------------------------------------------
+
+  users-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${USERS_DB_USER}
+      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD}
+      POSTGRES_DB: users
+    volumes:
+      - users-db-data:/var/lib/postgresql/data
+      - ../services/user-service/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck: *postgres-healthcheck
+
+  orders-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${ORDERS_DB_USER}
+      POSTGRES_PASSWORD: ${ORDERS_DB_PASSWORD}
+      POSTGRES_DB: orders
+    volumes:
+      - orders-db-data:/var/lib/postgresql/data
+      - ../services/order-service/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck: *postgres-healthcheck
+
+  payments-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${PAYMENTS_DB_USER}
+      POSTGRES_PASSWORD: ${PAYMENTS_DB_PASSWORD}
+      POSTGRES_DB: payments
+    volumes:
+      - payments-db-data:/var/lib/postgresql/data
+      - ../services/payment-service/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck: *postgres-healthcheck
+
+  restaurants-db:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${RESTAURANTS_DB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${RESTAURANTS_DB_PASSWORD}
+      MONGO_INITDB_DATABASE: ${RESTAURANTS_DB_NAME:-restaurants}
+    volumes:
+      - restaurants-db-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  orders-cache:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - orders-cache-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # --- shared message broker ---------------------------------------------------
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD}
+    volumes:
+      - rabbit-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  # --- application services ----------------------------------------------------
+
+  user-service:
+    image: ${REGISTRY:-food-delivery}/user-service:${IMAGE_TAG:-latest}
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://${USERS_DB_USER}:${USERS_DB_PASSWORD}@users-db:5432/users?sslmode=disable
+      JWT_PRIVATE_KEY_PATH: /run/jwt/jwt.key
+      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWT_ISSUER: ${JWT_ISSUER:-user-service}
+    volumes:
+      - *jwt-volume
+    depends_on:
+      users-db:
+        condition: service_healthy
+
+  restaurant-service:
+    image: ${REGISTRY:-food-delivery}/restaurant-service:${IMAGE_TAG:-latest}
+    environment:
+      PORT: "8080"
+      MONGO_URL: mongodb://${RESTAURANTS_DB_USER}:${RESTAURANTS_DB_PASSWORD}@restaurants-db:27017/${RESTAURANTS_DB_NAME:-restaurants}?authSource=admin
+      MONGO_DB: ${RESTAURANTS_DB_NAME:-restaurants}
+      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWT_ISSUER: ${JWT_ISSUER:-user-service}
+    volumes:
+      - *jwt-volume
+    depends_on:
+      restaurants-db:
+        condition: service_healthy
+
+  order-service:
+    image: ${REGISTRY:-food-delivery}/order-service:${IMAGE_TAG:-latest}
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://${ORDERS_DB_USER}:${ORDERS_DB_PASSWORD}@orders-db:5432/orders?sslmode=disable
+      REDIS_URL: redis://orders-cache:6379
+      RABBIT_URL: amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@rabbitmq:5672
+      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWT_ISSUER: ${JWT_ISSUER:-user-service}
+      RESTAURANT_SERVICE_URL: http://restaurant-service:8080
+      DELIVERY_FEE_CENTS: ${DELIVERY_FEE_CENTS:-250}
+      LOCATION_TTL_SECONDS: ${LOCATION_TTL_SECONDS:-120}
+    volumes:
+      - *jwt-volume
+    depends_on:
+      orders-db:
+        condition: service_healthy
+      orders-cache:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      restaurant-service:
+        condition: service_started
+
+  payment-service:
+    image: ${REGISTRY:-food-delivery}/payment-service:${IMAGE_TAG:-latest}
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://${PAYMENTS_DB_USER}:${PAYMENTS_DB_PASSWORD}@payments-db:5432/payments?sslmode=disable
+      RABBIT_URL: amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@rabbitmq:5672
+      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWT_ISSUER: ${JWT_ISSUER:-user-service}
+      DEFAULT_PAYMENT_METHOD: ${DEFAULT_PAYMENT_METHOD:-mock-card}
+    volumes:
+      - *jwt-volume
+    depends_on:
+      payments-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  users-db-data:
+  orders-db-data:
+  payments-db-data:
+  restaurants-db-data:
+  orders-cache-data:
+  rabbit-data:

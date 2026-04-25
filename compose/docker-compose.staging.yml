@@ -1,0 +1,40 @@
+name: food-delivery
+
+# Staging override: pull tagged images from a registry, restart on failure,
+# expose only the application services (data stores stay internal).
+
+services:
+  users-db:
+    restart: unless-stopped
+  orders-db:
+    restart: unless-stopped
+  payments-db:
+    restart: unless-stopped
+  restaurants-db:
+    restart: unless-stopped
+  orders-cache:
+    restart: unless-stopped
+  rabbitmq:
+    restart: unless-stopped
+    ports:
+      - "15672:15672"
+
+  user-service:
+    image: ${REGISTRY}/user-service:${IMAGE_TAG:-staging}
+    restart: unless-stopped
+    ports: ["8081:8080"]
+
+  restaurant-service:
+    image: ${REGISTRY}/restaurant-service:${IMAGE_TAG:-staging}
+    restart: unless-stopped
+    ports: ["8082:8080"]
+
+  order-service:
+    image: ${REGISTRY}/order-service:${IMAGE_TAG:-staging}
+    restart: unless-stopped
+    ports: ["8083:8080"]
+
+  payment-service:
+    image: ${REGISTRY}/payment-service:${IMAGE_TAG:-staging}
+    restart: unless-stopped
+    ports: ["8084:8080"]

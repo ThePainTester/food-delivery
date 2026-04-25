@@ -1,0 +1,5 @@
+.env.dev
+.env.staging
+.env.prod
+jwt/jwt.key
+jwt/jwt.pub
