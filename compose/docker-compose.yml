@@ -1,13 +1,24 @@
-name: food-delivery
+# The project name is set per environment via COMPOSE_PROJECT_NAME in
+# .env.<env> so dev/staging/prod can run side-by-side on one host. Compose
+# prefixes every network and volume with that project name automatically;
+# Traefik's --providers.docker.network flag (below) substitutes the same
+# variable so it points at this stack's app-net regardless of env.
 
 # Network segmentation
 # -------------------
-# public-net          frontend (and a future ingress)
-# app-net             frontend + every backend service for HTTP RPC
+# public-net          gateway only (and a future ingress)
+# app-net             gateway + frontend + every backend service for HTTP RPC
 # rabbit-net          rabbitmq + every backend service that messages
 # <svc>-data-net      one per service, joining only that service to its
 #                     own datastore. DBs/caches live ONLY on their data-net
 #                     so they cannot be reached from the app or the broker.
+#
+# Edge routing
+# ------------
+# The `gateway` service is stock Traefik. All routing rules live on the
+# backends + frontend as `traefik.*` labels — there is no custom image or
+# config file to maintain. When we move to Kubernetes the gateway container
+# disappears and these rules become Ingress objects (per service).
 
 x-jwt-volume: &jwt-volume
   type: bind
@@ -128,6 +139,12 @@ services:
       - app-net
       - rabbit-net
       - users-data-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.user.rule=PathRegexp(`^/api/(auth|users)(/.*)?$$`)"
+      - "traefik.http.routers.user.entrypoints=web"
+      - "traefik.http.routers.user.middlewares=strip-api@docker"
+      - "traefik.http.services.user.loadbalancer.server.port=8080"
 
   restaurant-service:
     image: ${REGISTRY:-food-delivery}/restaurant-service:${IMAGE_TAG:-latest}
@@ -137,6 +154,10 @@ services:
       MONGO_DB: ${RESTAURANTS_DB_NAME:-restaurants}
       JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
       JWT_ISSUER: ${JWT_ISSUER:-user-service}
+      # The gateway strips /api before forwarding; this tells FastAPI it's
+      # behind that prefix so 307 trailing-slash redirects keep /api in the
+      # Location header.
+      ROOT_PATH: /api
     volumes:
       - *jwt-volume
     depends_on:
@@ -146,6 +167,12 @@ services:
       - app-net
       - rabbit-net
       - restaurants-data-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.restaurant.rule=PathPrefix(`/api/restaurants`)"
+      - "traefik.http.routers.restaurant.entrypoints=web"
+      - "traefik.http.routers.restaurant.middlewares=strip-api@docker"
+      - "traefik.http.services.restaurant.loadbalancer.server.port=8080"
 
   order-service:
     image: ${REGISTRY:-food-delivery}/order-service:${IMAGE_TAG:-latest}
@@ -174,6 +201,12 @@ services:
       - app-net
       - rabbit-net
       - orders-data-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.order.rule=PathPrefix(`/api/orders`)"
+      - "traefik.http.routers.order.entrypoints=web"
+      - "traefik.http.routers.order.middlewares=strip-api@docker"
+      - "traefik.http.services.order.loadbalancer.server.port=8080"
 
   payment-service:
     image: ${REGISTRY:-food-delivery}/payment-service:${IMAGE_TAG:-latest}
@@ -195,24 +228,55 @@ services:
       - app-net
       - rabbit-net
       - payments-data-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.payment.rule=PathPrefix(`/api/payments`)"
+      - "traefik.http.routers.payment.entrypoints=web"
+      - "traefik.http.routers.payment.middlewares=strip-api@docker"
+      - "traefik.http.services.payment.loadbalancer.server.port=8080"
 
   frontend:
     image: ${REGISTRY:-food-delivery}/frontend:${IMAGE_TAG:-latest}
-    environment:
-      USER_SERVICE_HOST: user-service
-      USER_SERVICE_PORT: "8080"
-      RESTAURANT_SERVICE_HOST: restaurant-service
-      RESTAURANT_SERVICE_PORT: "8080"
-      ORDER_SERVICE_HOST: order-service
-      ORDER_SERVICE_PORT: "8080"
-      PAYMENT_SERVICE_HOST: payment-service
-      PAYMENT_SERVICE_PORT: "8080"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-net
+    labels:
+      - "traefik.enable=true"
+      # Catch-all for everything not matched by an /api/* router. The explicit
+      # priority=1 makes sure it always loses to a more specific backend rule.
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+
+  # --- edge router -------------------------------------------------------------
+
+  gateway:
+    image: traefik:v3.1
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      # Project-prefixed by compose; substituted from COMPOSE_PROJECT_NAME so
+      # each env's gateway routes only to its own backends.
+      - --providers.docker.network=${COMPOSE_PROJECT_NAME}_app-net
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`${COMPOSE_PROJECT_NAME}`)
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+      - --accesslog=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
       interval: 10s
       timeout: 5s
       retries: 5
     depends_on:
+      frontend:
+        condition: service_started
       user-service:
         condition: service_started
       restaurant-service:
@@ -224,8 +288,16 @@ services:
     networks:
       - public-net
       - app-net
+    labels:
+      # Shared middleware: strip the `/api` prefix once before routing to a
+      # backend so each service receives its native path layout
+      # (e.g. /api/auth/login -> /auth/login at user-service).
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.strip-api.stripprefix.prefixes=/api"
 
 networks:
+  # No explicit `name:` — compose auto-prefixes each with COMPOSE_PROJECT_NAME
+  # so multiple envs (dev/staging/prod) can coexist on one host.
   public-net:
   app-net:
     internal: true

@@ -27,15 +27,18 @@ docker compose \
 
 | Env | URL |
 |---|---|
-| Dev     | <http://localhost:8080> |
-| Staging | <http://\<host\>>      (NGINX bound on port 80) |
+| Dev     | <http://localhost:3000> |
+| Staging | <http://\<host\>:8080>  |
 | Prod    | <http://\<host\>> / <https://\<host\>>  (80 + 443 published) |
 
-In every environment the browser only talks to the frontend container; it
-proxies `/api/*` to the backend services on the internal compose network.
-Backend service ports are still published in dev/staging for direct testing
-but the SPA does not need them.
+In every environment the browser talks only to the **gateway** container
+(stock Traefik); the gateway forwards `/api/*` to the backend services and
+`/` to the static frontend container, all over the internal compose
+network. Routing rules live as `traefik.*` labels on each service in
+`compose/docker-compose.yml`. In dev the Traefik dashboard is available at
+<http://localhost:8090>. Backend service ports are still published in
+dev/staging for direct testing but the browser does not use them.
 
 See [`compose/README.md`](compose/README.md) for the full port map and
-[`services/frontend/README.md`](services/frontend/README.md) for SPA route
-and reverse-proxy details.
+[`services/frontend/README.md`](services/frontend/README.md) for SPA
+routes.

@@ -33,7 +33,17 @@ async def lifespan(app: FastAPI):
         mongo.close()
 
 
-app = FastAPI(title="Restaurant Service", lifespan=lifespan)
+_settings = load_settings()
+app = FastAPI(
+    title="Restaurant Service",
+    lifespan=lifespan,
+    root_path=_settings.root_path,
+    # When fronted by a path-stripping gateway, FastAPI's automatic
+    # trailing-slash redirects send a Location without the stripped prefix
+    # (root_path doesn't fix the Location header). Disable them so callers
+    # must use the exact path.
+    redirect_slashes=False,
+)
 
 app.add_exception_handler(HTTPException, http_exception_handler)  # type: ignore
 app.add_exception_handler(Exception, unhandled_exception_handler)  # type: ignore

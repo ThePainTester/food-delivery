@@ -48,5 +48,21 @@ services:
     build:
       context: ../services/frontend
     image: food-delivery/frontend:dev
-    ports: ["3000:80"]
+    restart: "no"
+
+  gateway:
+    # Traefik dashboard exposed on :8090 in dev for inspecting routes.
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${COMPOSE_PROJECT_NAME}_app-net
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`${COMPOSE_PROJECT_NAME}`)
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "3000:80"
+      - "8090:8080"
     restart: "no"

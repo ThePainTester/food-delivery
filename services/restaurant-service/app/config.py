@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     mongo_db: str = Field("restaurants", alias="MONGO_DB")
     jwt_public_key_path: str = Field(..., alias="JWT_PUBLIC_KEY_PATH")
     jwt_issuer: str = Field("user-service", alias="JWT_ISSUER")
+    root_path: str = Field("", alias="ROOT_PATH")
 
 
 def load_settings() -> Settings:
