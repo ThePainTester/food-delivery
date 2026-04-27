@@ -271,10 +271,14 @@ function renderCart(restaurantId) {
 async function viewCustomerOrders() {
   const u = currentUser();
   render(el(`<section><h1 class="text-xl font-semibold mb-4">My Orders</h1><div id="list" class="space-y-2"></div></section>`));
-  try {
+  const refresh = async () => {
     const list = await API.listOrders(`?customer_id=${u.id}`);
-    document.getElementById('list').innerHTML = (list || []).map(orderRow).join('') || '<p class="text-slate-600">No orders yet.</p>';
-  } catch (err) { flash(err.message); }
+    const target = document.getElementById('list');
+    if (!target) return;
+    target.innerHTML = (list || []).map(orderRow).join('') || '<p class="text-slate-600">No orders yet.</p>';
+  };
+  try { await refresh(); } catch (err) { flash(err.message); }
+  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
 }
 
 function orderRow(o) {
@@ -305,10 +309,22 @@ function statusTimeline(status) {
 let pollTimer = null;
 let mapInstance = null;
 let mapMarker = null;
+let listPollTimer = null;
+
+const LIST_POLL_MS = 4000;
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   if (mapInstance) { mapInstance.remove(); mapInstance = null; mapMarker = null; }
+}
+
+function stopListPolling() {
+  if (listPollTimer) { clearInterval(listPollTimer); listPollTimer = null; }
+}
+
+// Wraps a refresh fn so transient errors during polling don't spam the toast.
+function pollSilently(fn) {
+  return () => { fn().catch(() => {}); };
 }
 
 async function viewCustomerOrder(id) {
@@ -349,6 +365,7 @@ async function viewCustomerOrder(id) {
     } catch (err) { flash(err.message); }
   };
   await refresh();
+  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
 }
 
 function ensureMap(elId, lat, lng) {
@@ -410,15 +427,18 @@ async function viewRestaurantOrders() {
     } catch (err) { flash(err.message); }
   };
   await refresh();
+  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
 }
 
 function restaurantActions(o) {
   const btn = (s, label, color='bg-slate-900') =>
     `<button data-id="${o.id}" data-act="${s}" class="${color} text-white px-3 py-1 rounded">${label}</button>`;
+  const cancel = btn('CANCELLED','Cancel','bg-red-600');
   switch (o.status) {
     case 'PENDING':   return btn('ACCEPTED','Accept','bg-emerald-600') + btn('REJECTED','Reject','bg-red-600');
-    case 'ACCEPTED':  return btn('PREPARING','Start preparing');
-    case 'PREPARING': return btn('READY','Mark ready');
+    case 'ACCEPTED':  return btn('PREPARING','Start preparing') + cancel;
+    case 'PREPARING': return btn('READY','Mark ready') + cancel;
+    case 'READY':     return cancel;
     default:          return '';
   }
 }
@@ -443,7 +463,11 @@ async function viewRestaurantSetup() {
       const r = await API.createRestaurant(fd);
       localStorage.setItem(RESTAURANT_KEY, r.id);
       flash('Restaurant created', 'ok');
-      location.hash = '#/r/orders';
+      // Setup view is rendered as a fallback from #/r/orders, so the hash is
+      // already #/r/orders — assigning the same value won't fire hashchange.
+      // Re-run the router to leave the setup form.
+      if (location.hash === '#/r/orders') route();
+      else location.hash = '#/r/orders';
     } catch (err) { flash(err.message); }
   };
 }
@@ -528,9 +552,11 @@ async function viewDeliveryOrders() {
       location.hash = `#/d/orders/${id}`;
     } catch (err) { flash(err.message); }
   };
-  try {
+  const refresh = async () => {
     const list = await API.listOrders(`?delivery_user_id=${u.id}`);
-    document.getElementById('list').innerHTML = (list || []).map(o => `
+    const target = document.getElementById('list');
+    if (!target) return;
+    target.innerHTML = (list || []).map(o => `
       <a href="#/d/orders/${o.id}" class="block bg-white p-3 rounded shadow flex justify-between items-center">
         <div>
           <div class="font-medium">Order ${o.id.slice(0,8)}…</div>
@@ -541,7 +567,9 @@ async function viewDeliveryOrders() {
           <div class="text-slate-600">${fmtMoney(o.total)}</div>
         </div>
       </a>`).join('') || '<p class="text-slate-600">No active deliveries.</p>';
-  } catch (err) { flash(err.message); }
+  };
+  try { await refresh(); } catch (err) { flash(err.message); }
+  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
 }
 
 let geoWatchId = null;
@@ -583,6 +611,7 @@ async function viewDeliveryOrder(id) {
     } catch (err) { flash(err.message); }
   };
   await refresh();
+  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
 }
 
 function deliveryActions(o) {
@@ -627,7 +656,7 @@ function goHome() {
 }
 
 function route() {
-  stopPolling(); stopGeo();
+  stopPolling(); stopGeo(); stopListPolling();
   renderNav();
   const h = location.hash || '#/';
   const u = currentUser();

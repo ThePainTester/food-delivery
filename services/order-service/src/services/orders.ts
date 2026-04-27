@@ -160,8 +160,12 @@ export class OrdersService {
           throw forbidden("must be assigned delivery user");
         }
       } else if (target === "CANCELLED") {
-        if (actor.role !== "customer" || o.customer_id !== actor.userId) {
-          throw forbidden("only the customer can cancel");
+        if (actor.role === "customer") {
+          if (o.customer_id !== actor.userId) throw forbidden("not your order");
+        } else if (actor.role === "restaurant") {
+          await this.assertRestaurantOwner(o.restaurant_id, actor);
+        } else {
+          throw forbidden("customer or restaurant role required to cancel");
         }
       }
     }

@@ -23,6 +23,7 @@ const transitions: Record<OrderStatus, { from: OrderStatus[]; actor: ActorKind }
   CANCELLED: [
     { from: ["PENDING"], actor: "customer" },
     { from: ["PENDING"], actor: "system" }, // e.g. payment failure
+    { from: ["PENDING", "ACCEPTED", "PREPARING", "READY"], actor: "restaurant" },
   ],
 };
 

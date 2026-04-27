@@ -1,8 +1,20 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
+
+
+class _MongoModel(BaseModel):
+    """Mongo stores the primary key as `_id`; expose it as `id` to clients."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_mongo_id(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "_id" in data and "id" not in data:
+            data = {**data, "id": data["_id"]}
+        return data
 
 
 class RestaurantCreate(BaseModel):
@@ -26,12 +38,10 @@ class RestaurantUpdate(BaseModel):
     is_open: bool | None = None
 
 
-class RestaurantPublic(BaseModel):
+class RestaurantPublic(_MongoModel):
     """Public projection — no owner_id (avoid info disclosure / IDOR enabler)."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: UUID = Field(alias="_id")
+    id: UUID
     name: str
     description: str
     address: str
@@ -75,10 +85,8 @@ class MenuItemUpdate(BaseModel):
     is_available: bool | None = None
 
 
-class MenuItem(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: UUID = Field(alias="_id")
+class MenuItem(_MongoModel):
+    id: UUID
     restaurant_id: UUID
     name: str
     description: str
