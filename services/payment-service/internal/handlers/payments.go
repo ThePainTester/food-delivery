@@ -54,9 +54,10 @@ func toDTO(p *models.Payment) paymentDTO {
 }
 
 type createReq struct {
-	OrderID string  `json:"order_id" binding:"required,uuid"`
-	Amount  float64 `json:"amount" binding:"required,gt=0"`
-	Method  string  `json:"method"`
+	OrderID    string  `json:"order_id" binding:"required,uuid"`
+	Amount     float64 `json:"amount" binding:"required,gt=0"`
+	Method     string  `json:"method"`
+	CardNumber string  `json:"card_number"` // demo only — handed to the simulated gateway (card path)
 }
 
 func (h *handler) Create(c *gin.Context) {
@@ -65,16 +66,60 @@ func (h *handler) Create(c *gin.Context) {
 		errResp(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	customerID := c.GetString(middleware.CtxUserID)
 	p, err := h.svc.CreateForOrder(c, services.CreateInput{
 		OrderID:     req.OrderID,
+		CustomerID:  &customerID,
 		AmountCents: money.FromFloat(req.Amount),
 		Method:      req.Method,
+		CardNumber:  req.CardNumber,
 	})
+	if errors.Is(err, services.ErrPaymentDeclined) {
+		// 402 Payment Required — the order will also be cancelled by the
+		// order-service consumer of payment.failed.
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error":   "payment_declined",
+			"message": "Your card was declined. Please try a different card.",
+			"payment": toDTO(p),
+		})
+		return
+	}
 	if err != nil {
 		serverErr(c, "create_payment", err)
 		return
 	}
 	c.JSON(http.StatusCreated, toDTO(p))
+}
+
+func (h *handler) GetByOrder(c *gin.Context) {
+	p, err := h.svc.GetByOrderID(c, c.Param("orderId"))
+	if err != nil {
+		if errors.Is(err, repositories.ErrNotFound) {
+			errResp(c, http.StatusNotFound, "not_found", "no payment for this order")
+			return
+		}
+		serverErr(c, "get_payment_by_order", err)
+		return
+	}
+	c.JSON(http.StatusOK, toDTO(p))
+}
+
+func (h *handler) CollectCash(c *gin.Context) {
+	role := c.GetString(middleware.CtxRole)
+	if role != "delivery" {
+		errResp(c, http.StatusForbidden, "forbidden", "only delivery users can collect cash")
+		return
+	}
+	p, err := h.svc.CollectCash(c, c.Param("orderId"))
+	if err != nil {
+		if errors.Is(err, repositories.ErrNotFound) {
+			errResp(c, http.StatusNotFound, "not_found", "no payment for this order")
+			return
+		}
+		serverErr(c, "collect_cash", err)
+		return
+	}
+	c.JSON(http.StatusOK, toDTO(p))
 }
 
 func (h *handler) Get(c *gin.Context) {

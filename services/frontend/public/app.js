@@ -8,8 +8,8 @@ const TOKEN_KEY = 'fd.token';
 const RESTAURANT_KEY = 'fd.myRestaurantId';
 
 function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
-function getToken()    { return localStorage.getItem(TOKEN_KEY); }
-function clearAuth()   { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(RESTAURANT_KEY); }
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function clearAuth() { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(RESTAURANT_KEY); }
 
 function parseJwt(t) {
   try {
@@ -52,27 +52,30 @@ async function api(method, path, body) {
 }
 
 const API = {
-  register: (b)            => api('POST', '/auth/register', b),
-  login:    (b)            => api('POST', '/auth/login',    b),
-  me:       ()             => api('GET',  '/users/me'),
+  register: (b) => api('POST', '/auth/register', b),
+  login: (b) => api('POST', '/auth/login', b),
+  me: () => api('GET', '/users/me'),
 
-  listRestaurants: (q='')  => api('GET', `/restaurants${q}`),
-  getRestaurant:   (id)    => api('GET', `/restaurants/${id}`),
-  myRestaurant:    ()      => api('GET', `/restaurants/mine`),
-  createRestaurant:(b)     => api('POST',`/restaurants`, b),
-  patchRestaurant: (id, b) => api('PATCH',`/restaurants/${id}`, b),
-  getMenu:         (id)    => api('GET', `/restaurants/${id}/menu`),
-  createMenuItem:  (id,b)  => api('POST',`/restaurants/${id}/menu`, b),
-  patchMenuItem:   (id,it,b)=>api('PATCH',`/restaurants/${id}/menu/${it}`, b),
-  deleteMenuItem:  (id,it) => api('DELETE',`/restaurants/${id}/menu/${it}`),
+  listRestaurants: (q = '') => api('GET', `/restaurants${q}`),
+  getRestaurant: (id) => api('GET', `/restaurants/${id}`),
+  myRestaurant: () => api('GET', `/restaurants/mine`),
+  createRestaurant: (b) => api('POST', `/restaurants`, b),
+  patchRestaurant: (id, b) => api('PATCH', `/restaurants/${id}`, b),
+  getMenu: (id) => api('GET', `/restaurants/${id}/menu`),
+  createMenuItem: (id, b) => api('POST', `/restaurants/${id}/menu`, b),
+  patchMenuItem: (id, it, b) => api('PATCH', `/restaurants/${id}/menu/${it}`, b),
+  deleteMenuItem: (id, it) => api('DELETE', `/restaurants/${id}/menu/${it}`),
 
-  placeOrder:      (b)     => api('POST', '/orders', b),
-  getOrder:        (id)    => api('GET',  `/orders/${id}`),
-  listOrders:      (q)     => api('GET',  `/orders${q}`),
-  setOrderStatus:  (id, s) => api('PATCH',`/orders/${id}/status`, { status: s }),
-  assignOrder:     (id)    => api('POST', `/orders/${id}/assign`),
-  postLocation:    (id, b) => api('POST', `/orders/${id}/location`, b),
-  getLocation:     (id)    => api('GET',  `/orders/${id}/location`),
+  placeOrder: (b) => api('POST', '/orders', b),
+  payOrder: (b) => api('POST', '/payments', b),
+  getOrderPayment: (id) => api('GET', `/payments/by-order/${id}`),
+  collectCash: (id) => api('POST', `/payments/by-order/${id}/collect`),
+  getOrder: (id) => api('GET', `/orders/${id}`),
+  listOrders: (q) => api('GET', `/orders${q}`),
+  setOrderStatus: (id, s) => api('PATCH', `/orders/${id}/status`, { status: s }),
+  assignOrder: (id) => api('POST', `/orders/${id}/assign`),
+  postLocation: (id, b) => api('POST', `/orders/${id}/location`, b),
+  getLocation: (id) => api('GET', `/orders/${id}/location`),
 };
 
 // ---------- DOM helpers -----------------------------------------------------
@@ -90,7 +93,7 @@ function render(node) {
   app().replaceChildren(typeof node === 'string' ? el(node) : node);
 }
 
-function flash(msg, kind='error') {
+function flash(msg, kind = 'error') {
   const colour = kind === 'error' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800';
   const banner = el(`<div class="fixed top-3 right-3 px-4 py-2 rounded shadow ${colour}">${msg}</div>`);
   document.body.appendChild(banner);
@@ -144,9 +147,9 @@ function renderNav() {
     return;
   }
   const links = {
-    customer:   [['#/c/restaurants','Browse'], ['#/c/orders','My Orders']],
-    restaurant: [['#/r/orders','Orders'],      ['#/r/menu','Menu']],
-    delivery:   [['#/d/orders','Deliveries']],
+    customer: [['#/c/restaurants', 'Browse'], ['#/c/orders', 'My Orders']],
+    restaurant: [['#/r/orders', 'Orders'], ['#/r/menu', 'Menu']],
+    delivery: [['#/d/orders', 'Deliveries']],
   }[u.role] || [];
   for (const [h, label] of links) {
     navEl().append(el(`<a href="${h}" class="hover:underline">${label}</a>`));
@@ -305,8 +308,8 @@ async function viewCustomerRestaurant(id) {
           items: lines.map(l => ({ menu_item_id: l.item.id, quantity: l.qty })),
         });
         cart.items = {}; cart.restaurantId = null; cart.destination = null;
-        flash('Order placed', 'ok');
-        location.hash = `#/c/orders/${order.id}`;
+        flash('Order placed — please complete payment', 'ok');
+        location.hash = `#/c/checkout/${order.id}`;
       } catch (err) { flash(err.message); }
     };
   } catch (err) { flash(err.message); }
@@ -331,11 +334,101 @@ function renderCartLines() {
     <h2 class="font-semibold mb-2">Cart</h2>
     ${lines.length === 0 ? '<p class="text-sm text-slate-500">Empty.</p>' : `
       <ul class="text-sm space-y-1">
-        ${lines.map(l => `<li class="flex justify-between"><span>${l.qty}× ${l.item.name}</span><span>${fmtMoney(l.qty*parseFloat(l.item.price))}</span></li>`).join('')}
+        ${lines.map(l => `<li class="flex justify-between"><span>${l.qty}× ${l.item.name}</span><span>${fmtMoney(l.qty * parseFloat(l.item.price))}</span></li>`).join('')}
       </ul>
       <div class="border-t mt-2 pt-2 text-sm flex justify-between font-medium"><span>Subtotal</span><span>${fmtMoney(cartTotal())}</span></div>`}
   `;
   refreshPlaceBtn();
+}
+
+async function viewCustomerCheckout(orderId) {
+  render(el(`<section class="max-w-md mx-auto bg-white p-6 rounded shadow">
+    <h1 class="text-xl font-semibold mb-1">Checkout</h1>
+    <p class="text-sm text-slate-600 mb-4">Order <span class="font-mono">${orderId.slice(0, 8)}…</span></p>
+    <div id="summary" class="text-sm mb-4">Loading…</div>
+
+    <div class="flex gap-2 mb-4">
+      <button data-method="card" class="method flex-1 border rounded py-2 text-sm">Card</button>
+      <button data-method="cash" class="method flex-1 border rounded py-2 text-sm">Cash on delivery</button>
+    </div>
+
+    <form id="pay" class="space-y-3">
+      <div id="card-fields" class="space-y-3">
+        <input name="card_number" placeholder="Card number (e.g. 4242 4242 4242 4242)" class="w-full border rounded px-3 py-2 font-mono tracking-wider" autocomplete="cc-number" />
+        <div class="grid grid-cols-2 gap-3">
+          <input name="exp" placeholder="MM/YY" class="border rounded px-3 py-2 font-mono" autocomplete="cc-exp" />
+          <input name="cvv" placeholder="CVV" class="border rounded px-3 py-2 font-mono" autocomplete="cc-csc" />
+        </div>
+        <input name="cardholder" placeholder="Name on card" class="w-full border rounded px-3 py-2" autocomplete="cc-name" />
+      </div>
+      <p id="cash-note" class="hidden text-sm text-slate-700 bg-slate-50 border rounded p-3">Pay the driver in cash on delivery. The restaurant will start preparing once they accept your order.</p>
+      <button id="pay-btn" class="w-full bg-emerald-600 text-white py-2 rounded">Pay</button>
+      <p id="card-hint" class="text-xs text-slate-500">Demo: any card succeeds, except numbers ending in <span class="font-mono">0000</span> which simulate a decline. No real payment is taken.</p>
+    </form>
+  </section>`));
+
+  let order;
+  try { order = await API.getOrder(orderId); }
+  catch (err) { flash(err.message); return; }
+
+  if (order.paid) {
+    flash('Already paid', 'ok');
+    location.hash = `#/c/orders/${orderId}`;
+    return;
+  }
+
+  document.getElementById('summary').innerHTML = `
+    <div class="flex justify-between"><span>Subtotal</span><span>${fmtMoney(order.subtotal)}</span></div>
+    <div class="flex justify-between"><span>Delivery</span><span>${fmtMoney(order.delivery_fee)}</span></div>
+    <div class="flex justify-between font-semibold border-t mt-1 pt-1"><span>Total</span><span>${fmtMoney(order.total)}</span></div>
+  `;
+
+  let method = 'card';
+  const setMethod = (m) => {
+    method = m;
+    document.querySelectorAll('button.method').forEach(b => {
+      const on = b.dataset.method === m;
+      b.className = `method flex-1 border rounded py-2 text-sm ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700'}`;
+    });
+    document.getElementById('card-fields').classList.toggle('hidden', m !== 'card');
+    document.getElementById('cash-note').classList.toggle('hidden', m !== 'cash');
+    document.getElementById('card-hint').classList.toggle('hidden', m !== 'card');
+    document.getElementById('pay-btn').textContent = m === 'cash' ? 'Confirm cash order' : 'Pay';
+    // Required attribute toggled so the form doesn't validate hidden card fields.
+    ['card_number', 'exp', 'cvv', 'cardholder'].forEach(n => {
+      const el = document.querySelector(`[name="${n}"]`);
+      if (el) el.required = (m === 'card');
+    });
+  };
+  document.querySelectorAll('button.method').forEach(b => {
+    b.onclick = (e) => { e.preventDefault(); setMethod(b.dataset.method); };
+  });
+  setMethod('card');
+
+  document.getElementById('pay').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const btn = document.getElementById('pay-btn');
+    btn.disabled = true;
+    btn.textContent = method === 'cash' ? 'Confirming…' : 'Charging…';
+    try {
+      await API.payOrder({
+        order_id: orderId,
+        amount: parseFloat(order.total),
+        method,
+        card_number: method === 'card' ? fd.get('card_number') : '',
+      });
+      flash(method === 'cash' ? 'Order confirmed — pay the driver on delivery' : 'Payment approved', 'ok');
+      location.hash = `#/c/orders/${orderId}`;
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = method === 'cash' ? 'Confirm cash order' : 'Pay';
+      flash(err.message);
+      if (err.status === 402) {
+        setTimeout(() => { location.hash = `#/c/orders/${orderId}`; }, 1200);
+      }
+    }
+  };
 }
 
 async function viewCustomerOrders() {
@@ -354,7 +447,7 @@ async function viewCustomerOrders() {
 function orderRow(o) {
   return `<a href="#/c/orders/${o.id}" class="block bg-white p-3 rounded shadow flex justify-between items-center">
     <div>
-      <div class="font-medium">Order ${o.id.slice(0,8)}…</div>
+      <div class="font-medium">Order ${o.id.slice(0, 8)}…</div>
       <div class="text-sm text-slate-500">${new Date(o.created_at).toLocaleString()}</div>
     </div>
     <div class="text-right">
@@ -364,7 +457,7 @@ function orderRow(o) {
   </a>`;
 }
 
-const STATUS_FLOW = ['PENDING','ACCEPTED','PREPARING','READY','PICKED_UP','DELIVERED'];
+const STATUS_FLOW = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'PICKED_UP', 'DELIVERED'];
 
 function statusTimeline(status) {
   if (status === 'REJECTED' || status === 'CANCELLED') {
@@ -372,7 +465,7 @@ function statusTimeline(status) {
   }
   const idx = STATUS_FLOW.indexOf(status);
   return `<ol class="flex flex-wrap gap-2 text-xs">
-    ${STATUS_FLOW.map((s,i) => `<li class="px-2 py-1 rounded ${i<=idx?'bg-emerald-600 text-white':'bg-slate-200 text-slate-600'}">${s}</li>`).join('')}
+    ${STATUS_FLOW.map((s, i) => `<li class="px-2 py-1 rounded ${i <= idx ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}">${s}</li>`).join('')}
   </ol>`;
 }
 
@@ -395,7 +488,7 @@ function stopListPolling() {
 
 // Wraps a refresh fn so transient errors during polling don't spam the toast.
 function pollSilently(fn) {
-  return () => { fn().catch(() => {}); };
+  return () => { fn().catch(() => { }); };
 }
 
 async function viewCustomerOrder(id) {
@@ -417,9 +510,16 @@ async function viewCustomerOrder(id) {
   const refresh = async () => {
     try {
       const o = await API.getOrder(id);
-      document.getElementById('order-title').textContent = `Order ${o.id.slice(0,8)}…`;
+      let payment = null;
+      try { payment = await API.getOrderPayment(id); }
+      catch (e) { if (e.status !== 404) console.warn(e); }
+      document.getElementById('order-title').textContent = `Order ${o.id.slice(0, 8)}…`;
       document.getElementById('status-bar').innerHTML = statusTimeline(o.status);
-      const itemsHtml = (o.items || []).map(i => `<li class="flex justify-between"><span>${i.quantity}× ${i.name}</span><span>${fmtMoney(parseFloat(i.unit_price)*i.quantity)}</span></li>`).join('');
+      const itemsHtml = (o.items || []).map(i => `<li class="flex justify-between"><span>${i.quantity}× ${i.name}</span><span>${fmtMoney(parseFloat(i.unit_price) * i.quantity)}</span></li>`).join('');
+      const paidLabel = o.paid
+        ? (payment && payment.method === 'cash' ? 'paid (cash collected)' : 'yes')
+        : (payment && payment.method === 'cash' && payment.status === 'PENDING' ? 'cash on delivery' : 'no');
+      const needsCheckout = !payment && o.status === 'PENDING';
       document.getElementById('order-summary').innerHTML = `
         <h2 class="font-semibold mb-2">Items</h2>
         <ul class="text-sm space-y-1">${itemsHtml}</ul>
@@ -427,8 +527,9 @@ async function viewCustomerOrder(id) {
           <div class="flex justify-between"><span>Subtotal</span><span>${fmtMoney(o.subtotal)}</span></div>
           <div class="flex justify-between"><span>Delivery</span><span>${fmtMoney(o.delivery_fee)}</span></div>
           <div class="flex justify-between font-medium"><span>Total</span><span>${fmtMoney(o.total)}</span></div>
-          <div class="flex justify-between text-slate-600"><span>Paid</span><span>${o.paid ? 'yes' : 'no'}</span></div>
+          <div class="flex justify-between text-slate-600"><span>Payment</span><span>${paidLabel}</span></div>
         </div>
+        ${needsCheckout ? `<a href="#/c/checkout/${o.id}" class="block text-center mt-3 w-full bg-emerald-600 text-white py-2 rounded text-sm">Pay now</a>` : ''}
         ${o.status === 'PENDING' ? `<button id="cancel" class="mt-3 w-full bg-red-600 text-white py-2 rounded text-sm">Cancel order</button>` : ''}`;
       const cancelBtn = document.getElementById('cancel');
       if (cancelBtn) cancelBtn.onclick = async () => {
@@ -523,9 +624,9 @@ async function viewRestaurantOrders() {
         <div class="bg-white p-3 rounded shadow">
           <div class="flex justify-between items-start">
             <div>
-              <div class="font-medium">Order ${o.id.slice(0,8)}…</div>
+              <div class="font-medium">Order ${o.id.slice(0, 8)}…</div>
               <div class="text-sm text-slate-500">${new Date(o.created_at).toLocaleString()}</div>
-              <ul class="text-sm text-slate-700 mt-1">${(o.items||[]).map(i=>`<li>${i.quantity}× ${i.name}</li>`).join('')}</ul>
+              <ul class="text-sm text-slate-700 mt-1">${(o.items || []).map(i => `<li>${i.quantity}× ${i.name}</li>`).join('')}</ul>
             </div>
             <div class="text-right text-sm">
               <div>${o.status}</div>
@@ -547,15 +648,15 @@ async function viewRestaurantOrders() {
 }
 
 function restaurantActions(o) {
-  const btn = (s, label, color='bg-slate-900') =>
+  const btn = (s, label, color = 'bg-slate-900') =>
     `<button data-id="${o.id}" data-act="${s}" class="${color} text-white px-3 py-1 rounded">${label}</button>`;
-  const cancel = btn('CANCELLED','Cancel','bg-red-600');
+  const cancel = btn('CANCELLED', 'Cancel', 'bg-red-600');
   switch (o.status) {
-    case 'PENDING':   return btn('ACCEPTED','Accept','bg-emerald-600') + btn('REJECTED','Reject','bg-red-600');
-    case 'ACCEPTED':  return btn('PREPARING','Start preparing') + cancel;
-    case 'PREPARING': return btn('READY','Mark ready') + cancel;
-    case 'READY':     return cancel;
-    default:          return '';
+    case 'PENDING': return btn('ACCEPTED', 'Accept', 'bg-emerald-600') + btn('REJECTED', 'Reject', 'bg-red-600');
+    case 'ACCEPTED': return btn('PREPARING', 'Start preparing') + cancel;
+    case 'PREPARING': return btn('READY', 'Mark ready') + cancel;
+    case 'READY': return cancel;
+    default: return '';
   }
 }
 
@@ -707,7 +808,7 @@ async function viewDeliveryOrders() {
     target.innerHTML = (list || []).map(o => `
       <a href="#/d/orders/${o.id}" class="block bg-white p-3 rounded shadow flex justify-between items-center">
         <div>
-          <div class="font-medium">Order ${o.id.slice(0,8)}…</div>
+          <div class="font-medium">Order ${o.id.slice(0, 8)}…</div>
           <div class="text-sm text-slate-600">${o.delivery_address || ''}</div>
         </div>
         <div class="text-right text-sm">
@@ -735,7 +836,7 @@ let simDoneOrderId = null;
 function isSimulated() { return localStorage.getItem(SIM_KEY) === '1'; }
 function setSimulated(v) {
   if (v) localStorage.setItem(SIM_KEY, '1');
-  else   localStorage.removeItem(SIM_KEY);
+  else localStorage.removeItem(SIM_KEY);
 }
 
 function stopGeo() {
@@ -750,7 +851,7 @@ function stopGeo() {
 // SIM_DURATION_MS, posting every SIM_TICK_MS. Real geolocation is not used
 // in this mode — this exists purely so the demo can show movement on the map
 // without the delivery user actually walking around.
-const SIM_DURATION_MS = 90_000;
+const SIM_DURATION_MS = 30_000;
 const SIM_TICK_MS = 2_000;
 function startSimulatedDelivery(orderId, from, to) {
   if (simTimer) return;
@@ -764,7 +865,7 @@ function startSimulatedDelivery(orderId, from, to) {
     const el = document.getElementById('geo-status');
     if (el) el.textContent =
       `Simulated (demo): ${lat.toFixed(5)}, ${lng.toFixed(5)} — ${(t * 100).toFixed(0)}%`;
-    try { await API.postLocation(orderId, { latitude: lat, longitude: lng }); } catch {}
+    try { await API.postLocation(orderId, { latitude: lat, longitude: lng }); } catch { }
     if (t >= 1 && simTimer) {
       clearInterval(simTimer); simTimer = null;
       simDoneOrderId = orderId;
@@ -784,6 +885,10 @@ async function viewDeliveryOrder(id) {
       if (!restaurant || restaurant.id !== o.restaurant_id) {
         try { restaurant = await API.getRestaurant(o.restaurant_id); } catch { restaurant = null; }
       }
+      let payment = null;
+      try { payment = await API.getOrderPayment(id); }
+      catch (e) { if (e.status !== 404) console.warn(e); }
+      const needsCash = payment && payment.method === 'cash' && payment.status === 'PENDING';
       const sim = isSimulated();
       const dest = (o.delivery_latitude != null && o.delivery_longitude != null)
         ? { lat: o.delivery_latitude, lng: o.delivery_longitude } : null;
@@ -792,12 +897,16 @@ async function viewDeliveryOrder(id) {
       const canSim = !!(from && dest);
 
       document.getElementById('body').innerHTML = `
-        <h1 class="text-xl font-semibold mb-2">Order ${o.id.slice(0,8)}…</h1>
+        <h1 class="text-xl font-semibold mb-2">Order ${o.id.slice(0, 8)}…</h1>
         ${statusTimeline(o.status)}
         <div class="bg-white p-4 rounded shadow mt-4">
           <div class="text-sm text-slate-700">Drop at: <strong>${o.delivery_address || ''}</strong></div>
-          <ul class="text-sm text-slate-600 mt-1">${(o.items||[]).map(i=>`<li>${i.quantity}× ${i.name}</li>`).join('')}</ul>
-          <div class="mt-3 flex gap-2">${deliveryActions(o)}</div>
+          <ul class="text-sm text-slate-600 mt-1">${(o.items || []).map(i => `<li>${i.quantity}× ${i.name}</li>`).join('')}</ul>
+          ${needsCash ? `<div class="mt-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">Collect <strong>${fmtMoney(o.total)}</strong> in cash on delivery.</div>` : ''}
+          <div class="mt-3 flex gap-2 flex-wrap">
+            ${deliveryActions(o)}
+            ${needsCash ? `<button id="cash-collected" class="bg-amber-600 text-white px-3 py-1 rounded text-sm">Cash collected</button>` : ''}
+          </div>
         </div>
         <div class="bg-white p-4 rounded shadow mt-4">
           <div class="flex items-center justify-between gap-2 mb-2">
@@ -814,6 +923,11 @@ async function viewDeliveryOrder(id) {
           catch (err) { flash(err.message); }
         };
       });
+      const cashBtn = document.getElementById('cash-collected');
+      if (cashBtn) cashBtn.onclick = async () => {
+        try { await API.collectCash(id); flash('Cash collected', 'ok'); refresh(); }
+        catch (err) { flash(err.message); }
+      };
       const toggleBtn = document.getElementById('sim-toggle');
       if (toggleBtn && !toggleBtn.disabled) {
         toggleBtn.onclick = () => {
@@ -839,11 +953,11 @@ async function viewDeliveryOrder(id) {
 }
 
 function deliveryActions(o) {
-  const btn = (s, label, color='bg-slate-900') =>
+  const btn = (s, label, color = 'bg-slate-900') =>
     `<button data-id="${o.id}" data-act="${s}" class="${color} text-white px-3 py-1 rounded text-sm">${label}</button>`;
   switch (o.status) {
-    case 'READY':     return btn('PICKED_UP','Mark picked up','bg-emerald-600');
-    case 'PICKED_UP': return btn('DELIVERED','Mark delivered','bg-emerald-700');
+    case 'READY': return btn('PICKED_UP', 'Mark picked up', 'bg-emerald-600');
+    case 'PICKED_UP': return btn('DELIVERED', 'Mark delivered', 'bg-emerald-700');
     default: return '';
   }
 }
@@ -857,7 +971,7 @@ function startDeliveryTracking(orderId, restaurantOrigin) {
     API.postLocation(orderId, {
       latitude: restaurantOrigin.lat,
       longitude: restaurantOrigin.lng,
-    }).catch(() => {});
+    }).catch(() => { });
   }
   if (!navigator.geolocation) {
     document.getElementById('geo-status').textContent = 'Geolocation not supported.';
@@ -895,26 +1009,27 @@ function route() {
   const u = currentUser();
 
   if (h === '#/' || h === '') return goHome();
-  if (h === '#/login')    return viewLogin();
+  if (h === '#/login') return viewLogin();
   if (h === '#/register') return viewRegister();
 
   if (!u) { location.hash = '#/login'; return; }
 
   // Customer
   let m;
-  if ((m = h.match(/^#\/c\/restaurants$/)))         return viewCustomerRestaurants();
-  if ((m = h.match(/^#\/c\/restaurants\/(.+)$/)))   return viewCustomerRestaurant(m[1]);
-  if ((m = h.match(/^#\/c\/orders$/)))              return viewCustomerOrders();
-  if ((m = h.match(/^#\/c\/orders\/(.+)$/)))        return viewCustomerOrder(m[1]);
+  if ((m = h.match(/^#\/c\/restaurants$/))) return viewCustomerRestaurants();
+  if ((m = h.match(/^#\/c\/restaurants\/(.+)$/))) return viewCustomerRestaurant(m[1]);
+  if ((m = h.match(/^#\/c\/orders$/))) return viewCustomerOrders();
+  if ((m = h.match(/^#\/c\/orders\/(.+)$/))) return viewCustomerOrder(m[1]);
+  if ((m = h.match(/^#\/c\/checkout\/(.+)$/))) return viewCustomerCheckout(m[1]);
 
   // Restaurant
-  if ((m = h.match(/^#\/r\/orders$/)))              return viewRestaurantOrders();
-  if ((m = h.match(/^#\/r\/menu$/)))                return viewRestaurantMenu();
-  if ((m = h.match(/^#\/r\/setup$/)))               return viewRestaurantSetup();
+  if ((m = h.match(/^#\/r\/orders$/))) return viewRestaurantOrders();
+  if ((m = h.match(/^#\/r\/menu$/))) return viewRestaurantMenu();
+  if ((m = h.match(/^#\/r\/setup$/))) return viewRestaurantSetup();
 
   // Delivery
-  if ((m = h.match(/^#\/d\/orders$/)))              return viewDeliveryOrders();
-  if ((m = h.match(/^#\/d\/orders\/(.+)$/)))        return viewDeliveryOrder(m[1]);
+  if ((m = h.match(/^#\/d\/orders$/))) return viewDeliveryOrders();
+  if ((m = h.match(/^#\/d\/orders\/(.+)$/))) return viewDeliveryOrder(m[1]);
 
   goHome();
 }

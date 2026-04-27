@@ -30,7 +30,13 @@ type CreateInput struct {
 	CustomerID  *string // optional; populated from event-driven path
 	AmountCents int64
 	Method      string
+	CardNumber  string // demo only — used by the simulated gateway
 }
+
+// ErrPaymentDeclined is returned when the simulated gateway rejects the
+// charge. The handler maps this to HTTP 402 and the consumer publishes
+// payment.failed.
+var ErrPaymentDeclined = errors.New("payment declined")
 
 type PaymentsService struct {
 	repo          *repositories.PaymentsRepo
@@ -42,22 +48,71 @@ func New(repo *repositories.PaymentsRepo, rabbit *events.Rabbit, defaultMethod s
 	return &PaymentsService{repo: repo, rabbit: rabbit, defaultMethod: defaultMethod}
 }
 
-// CreateForOrder creates a payment in COMPLETED state (mock always succeeds)
-// and publishes payment.completed. Idempotent at the order_id boundary.
+// MethodCash signals that the customer chose cash on delivery. The gateway
+// is bypassed and the payment record stays in PENDING until the driver
+// collects on delivery and calls CollectCash.
+const MethodCash = "cash"
+
+// CreateForOrder records a payment for the given order. For card payments
+// it synchronously charges via the (simulated) gateway and publishes either
+// payment.completed or payment.failed. For cash it skips the gateway and
+// leaves the payment PENDING — the driver settles on delivery.
+//
+// Idempotent at the order_id boundary — a retry against an already-paid
+// order returns the existing payment record.
 func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*models.Payment, error) {
 	method := in.Method
 	if method == "" {
 		method = s.defaultMethod
 	}
+
+	// Idempotency: if a payment already exists for this order, return it
+	// without re-billing the gateway or creating a duplicate cash record.
+	if existing, err := s.repo.GetByOrderID(ctx, in.OrderID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, repositories.ErrNotFound) {
+		return nil, err
+	}
+
+	if method == MethodCash {
+		p, err := s.repo.Create(ctx, &models.Payment{
+			OrderID:     in.OrderID,
+			CustomerID:  in.CustomerID,
+			AmountCents: in.AmountCents,
+			Status:      models.StatusPending,
+			Method:      method,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if perr := s.rabbit.Publish(ctx, "payment.pending", map[string]any{
+			"payment_id": p.ID,
+			"order_id":   p.OrderID,
+			"amount":     money.ToFloat(p.AmountCents),
+			"method":     p.Method,
+		}); perr != nil {
+			slog.Error("publish payment.pending failed", "payment_id", p.ID, "err", perr)
+		}
+		return p, nil
+	}
+
+	res, err := chargeViaGateway(ctx, in.CardNumber, in.AmountCents)
+	if err != nil {
+		return nil, err
+	}
+
+	status := models.StatusCompleted
+	if !res.ok {
+		status = models.StatusFailed
+	}
 	p, err := s.repo.Create(ctx, &models.Payment{
 		OrderID:     in.OrderID,
 		CustomerID:  in.CustomerID,
 		AmountCents: in.AmountCents,
-		Status:      models.StatusCompleted,
+		Status:      status,
 		Method:      method,
 	})
 	if errors.Is(err, repositories.ErrAlreadyExists) {
-		// Already paid (event redelivery before idempotency table caught up).
 		existing, gerr := s.repo.GetByOrderID(ctx, in.OrderID)
 		if gerr != nil {
 			return nil, gerr
@@ -68,6 +123,17 @@ func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*
 		return nil, err
 	}
 
+	if !res.ok {
+		if perr := s.rabbit.Publish(ctx, "payment.failed", map[string]any{
+			"payment_id": p.ID,
+			"order_id":   p.OrderID,
+			"reason":     res.reason,
+		}); perr != nil {
+			slog.Error("publish payment.failed failed", "payment_id", p.ID, "err", perr)
+		}
+		return p, ErrPaymentDeclined
+	}
+
 	if perr := s.rabbit.Publish(ctx, "payment.completed", map[string]any{
 		"payment_id":   p.ID,
 		"order_id":     p.OrderID,
@@ -75,11 +141,43 @@ func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*
 		"method":       p.Method,
 		"completed_at": time.Now().UTC().Format(time.RFC3339Nano),
 	}); perr != nil {
-		// Publish failed — log, but don't roll back the DB write. The
-		// idempotency table + ON CONFLICT means a retry won't double-charge.
 		slog.Error("publish payment.completed failed", "payment_id", p.ID, "err", perr)
 	}
 	return p, nil
+}
+
+// CollectCash marks the cash payment for the given order as COMPLETED and
+// publishes payment.completed so order-service can flip the order's paid
+// flag. Returns the existing payment unchanged if it was already completed.
+func (s *PaymentsService) CollectCash(ctx context.Context, orderID string) (*models.Payment, error) {
+	p, err := s.repo.MarkCompletedByOrderID(ctx, orderID)
+	if errors.Is(err, repositories.ErrAlreadyExists) {
+		// Already collected — no-op, return the row.
+		return p, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if p.Method != MethodCash {
+		// Only cash payments are eligible for manual collection. Card payments
+		// flow through the gateway path. Treat as already-settled.
+		return p, nil
+	}
+	if perr := s.rabbit.Publish(ctx, "payment.completed", map[string]any{
+		"payment_id":   p.ID,
+		"order_id":     p.OrderID,
+		"amount":       money.ToFloat(p.AmountCents),
+		"method":       p.Method,
+		"completed_at": time.Now().UTC().Format(time.RFC3339Nano),
+	}); perr != nil {
+		slog.Error("publish payment.completed failed (cash)", "payment_id", p.ID, "err", perr)
+	}
+	return p, nil
+}
+
+// GetByOrderID returns the payment for an order or ErrNotFound.
+func (s *PaymentsService) GetByOrderID(ctx context.Context, orderID string) (*models.Payment, error) {
+	return s.repo.GetByOrderID(ctx, orderID)
 }
 
 func (s *PaymentsService) GetForActor(ctx context.Context, id string, actor Actor) (*models.Payment, error) {

@@ -56,6 +56,8 @@ func main() {
 	authed := r.Group("/payments", middleware.RequireAuth(verifier))
 	{
 		authed.POST("", h.Create)
+		authed.GET("/by-order/:orderId", h.GetByOrder)
+		authed.POST("/by-order/:orderId/collect", h.CollectCash)
 		authed.GET("/:id", h.Get)
 	}
 
