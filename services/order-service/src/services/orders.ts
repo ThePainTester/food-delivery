@@ -18,6 +18,8 @@ export interface CreateOrderInput {
   restaurantId: string;
   items: { menuItemId: string; quantity: number }[];
   deliveryAddress: string;
+  deliveryLatitude?: number | null;
+  deliveryLongitude?: number | null;
 }
 
 export interface ListQuery {
@@ -46,11 +48,18 @@ export class OrdersService {
 
   async createOrder(customerId: string, input: CreateOrderInput): Promise<OrderRow> {
     let menu;
+    let restaurant;
     try {
-      menu = await this.restaurants.getMenu(input.restaurantId);
+      [restaurant, menu] = await Promise.all([
+        this.restaurants.getRestaurant(input.restaurantId),
+        this.restaurants.getMenu(input.restaurantId),
+      ]);
     } catch (e) {
       if (e instanceof RestaurantNotFoundError) throw notFound("restaurant not found");
       throw e;
+    }
+    if (!restaurant.is_open) {
+      throw badRequest("This restaurant isn't accepting orders right now. Please try again later.");
     }
     const menuById = new Map(menu.map((m) => [m.id, m]));
 
@@ -80,6 +89,8 @@ export class OrdersService {
       deliveryFeeCents: this.deliveryFeeCents,
       totalCents,
       deliveryAddress: input.deliveryAddress,
+      deliveryLatitude: input.deliveryLatitude ?? null,
+      deliveryLongitude: input.deliveryLongitude ?? null,
     });
 
     await this.rabbit.publish("order.placed", {

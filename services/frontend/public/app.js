@@ -58,6 +58,7 @@ const API = {
 
   listRestaurants: (q='')  => api('GET', `/restaurants${q}`),
   getRestaurant:   (id)    => api('GET', `/restaurants/${id}`),
+  myRestaurant:    ()      => api('GET', `/restaurants/mine`),
   createRestaurant:(b)     => api('POST',`/restaurants`, b),
   patchRestaurant: (id, b) => api('PATCH',`/restaurants/${id}`, b),
   getMenu:         (id)    => api('GET', `/restaurants/${id}/menu`),
@@ -100,6 +101,34 @@ function fmtMoney(s) {
   if (s == null) return '';
   const n = typeof s === 'string' ? parseFloat(s) : s;
   return `$${n.toFixed(2)}`;
+}
+
+// ---------- map helpers -----------------------------------------------------
+
+const DEFAULT_CENTER = [37.7749, -122.4194]; // San Francisco
+const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const TILE_ATTR = '© OpenStreetMap';
+
+// Click-to-pick map. `initial` is [lat,lng] or null. Calls onPick({lat,lng}).
+// Returns { setLatLng } so the caller can programmatically move the pin.
+function pickerMap(elId, initial, onPick) {
+  const start = initial || DEFAULT_CENTER;
+  const map = L.map(elId).setView(start, initial ? 15 : 12);
+  L.tileLayer(TILE_URL, { attribution: TILE_ATTR, maxZoom: 19 }).addTo(map);
+  let marker = initial ? L.marker(start).addTo(map) : null;
+  map.on('click', (e) => {
+    const { lat, lng } = e.latlng;
+    if (marker) marker.setLatLng([lat, lng]);
+    else marker = L.marker([lat, lng]).addTo(map);
+    onPick({ lat, lng });
+  });
+  return {
+    setLatLng: (lat, lng) => {
+      if (marker) marker.setLatLng([lat, lng]);
+      else marker = L.marker([lat, lng]).addTo(map);
+      map.panTo([lat, lng]);
+    },
+  };
 }
 
 // ---------- nav -------------------------------------------------------------
@@ -185,7 +214,7 @@ function viewRegister() {
 
 // ---------- views: customer -------------------------------------------------
 
-const cart = { restaurantId: null, items: {} }; // { menuItemId -> { item, qty } }
+const cart = { restaurantId: null, items: {}, destination: null }; // { menuItemId -> { item, qty } }
 
 function cartTotal() {
   return Object.values(cart.items).reduce((s, l) => s + l.qty * parseFloat(l.item.price), 0);
@@ -210,12 +239,28 @@ async function viewCustomerRestaurant(id) {
     <div id="head" class="mt-2"></div>
     <div class="grid md:grid-cols-3 gap-4 mt-4">
       <div id="menu" class="md:col-span-2 space-y-2"></div>
-      <aside id="cart" class="bg-white p-4 rounded shadow self-start"></aside>
+      <aside class="bg-white p-4 rounded shadow self-start space-y-3">
+        <div id="cart-lines"></div>
+        <div>
+          <label class="block text-sm text-slate-700 mb-1">Delivery destination (click map)</label>
+          <div id="dest-map"></div>
+          <p id="dest-readout" class="text-xs text-slate-500 mt-1">No destination picked.</p>
+        </div>
+        <input id="addr" placeholder="Delivery address" class="w-full border rounded px-2 py-1 text-sm" />
+        <button id="place" class="w-full bg-emerald-600 text-white py-2 rounded text-sm disabled:opacity-50" disabled>Place order</button>
+      </aside>
     </div></section>`));
-  if (cart.restaurantId !== id) { cart.restaurantId = id; cart.items = {}; }
+  if (cart.restaurantId !== id) { cart.restaurantId = id; cart.items = {}; cart.destination = null; }
   try {
     const [r, menu] = await Promise.all([API.getRestaurant(id), API.getMenu(id)]);
-    document.getElementById('head').innerHTML = `<h1 class="text-xl font-semibold">${r.name}</h1><p class="text-slate-600">${r.description || ''}</p>`;
+    const closedBanner = r.is_open ? '' :
+      `<p class="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-2">This restaurant is not accepting orders right now. You can browse the menu, but checkout is disabled until they reopen.</p>`;
+    const closedTag = r.is_open ? '' : '<span class="text-sm text-red-600 align-middle">(closed)</span>';
+    document.getElementById('head').innerHTML =
+      `<h1 class="text-xl font-semibold">${r.name} ${closedTag}</h1>` +
+      `<p class="text-slate-600">${r.description || ''}</p>` +
+      closedBanner;
+    cart.restaurantOpen = !!r.is_open;
     const menuEl = document.getElementById('menu');
     menuEl.innerHTML = (menu || []).map(m => `
       <div class="bg-white p-3 rounded shadow flex items-center justify-between">
@@ -231,41 +276,66 @@ async function viewCustomerRestaurant(id) {
         const item = menu.find(x => x.id === b.dataset.id);
         const line = cart.items[item.id] || { item, qty: 0 };
         line.qty += 1; cart.items[item.id] = line;
-        renderCart(id);
+        renderCartLines();
       };
     });
-    renderCart(id);
+
+    // Center the picker on the restaurant if it has coordinates.
+    const initial = (r.latitude != null && r.longitude != null) ? [r.latitude, r.longitude] : null;
+    pickerMap('dest-map', initial, ({ lat, lng }) => {
+      cart.destination = { lat, lng };
+      document.getElementById('dest-readout').textContent =
+        `Destination: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      refreshPlaceBtn();
+    });
+
+    renderCartLines();
+    document.getElementById('addr').oninput = refreshPlaceBtn;
+    document.getElementById('place').onclick = async () => {
+      const addr = document.getElementById('addr').value.trim();
+      if (!addr) return flash('Address required');
+      if (!cart.destination) return flash('Pick a destination on the map');
+      const lines = Object.values(cart.items);
+      try {
+        const order = await API.placeOrder({
+          restaurant_id: id,
+          delivery_address: addr,
+          delivery_latitude: cart.destination.lat,
+          delivery_longitude: cart.destination.lng,
+          items: lines.map(l => ({ menu_item_id: l.item.id, quantity: l.qty })),
+        });
+        cart.items = {}; cart.restaurantId = null; cart.destination = null;
+        flash('Order placed', 'ok');
+        location.hash = `#/c/orders/${order.id}`;
+      } catch (err) { flash(err.message); }
+    };
   } catch (err) { flash(err.message); }
 }
 
-function renderCart(restaurantId) {
+function refreshPlaceBtn() {
+  const btn = document.getElementById('place');
+  if (!btn) return;
   const lines = Object.values(cart.items);
-  const html = `
+  const addrEl = document.getElementById('addr');
+  const open = cart.restaurantOpen !== false;
+  const ok = open && lines.length > 0 && cart.destination && addrEl && addrEl.value.trim();
+  btn.disabled = !ok;
+  btn.textContent = open ? 'Place order' : 'Restaurant closed';
+}
+
+function renderCartLines() {
+  const lines = Object.values(cart.items);
+  const target = document.getElementById('cart-lines');
+  if (!target) return;
+  target.innerHTML = `
     <h2 class="font-semibold mb-2">Cart</h2>
     ${lines.length === 0 ? '<p class="text-sm text-slate-500">Empty.</p>' : `
       <ul class="text-sm space-y-1">
         ${lines.map(l => `<li class="flex justify-between"><span>${l.qty}× ${l.item.name}</span><span>${fmtMoney(l.qty*parseFloat(l.item.price))}</span></li>`).join('')}
       </ul>
-      <div class="border-t mt-2 pt-2 text-sm flex justify-between font-medium"><span>Subtotal</span><span>${fmtMoney(cartTotal())}</span></div>
-      <input id="addr" placeholder="Delivery address" class="w-full border rounded px-2 py-1 mt-3 text-sm" />
-      <button id="place" class="w-full bg-emerald-600 text-white py-2 rounded mt-2 text-sm">Place order</button>`}
-    `;
-  document.getElementById('cart').innerHTML = html;
-  if (lines.length === 0) return;
-  document.getElementById('place').onclick = async () => {
-    const addr = document.getElementById('addr').value.trim();
-    if (!addr) return flash('Address required');
-    try {
-      const order = await API.placeOrder({
-        restaurant_id: restaurantId,
-        delivery_address: addr,
-        items: lines.map(l => ({ menu_item_id: l.item.id, quantity: l.qty })),
-      });
-      cart.items = {}; cart.restaurantId = null;
-      flash('Order placed', 'ok');
-      location.hash = `#/c/orders/${order.id}`;
-    } catch (err) { flash(err.message); }
-  };
+      <div class="border-t mt-2 pt-2 text-sm flex justify-between font-medium"><span>Subtotal</span><span>${fmtMoney(cartTotal())}</span></div>`}
+  `;
+  refreshPlaceBtn();
 }
 
 async function viewCustomerOrders() {
@@ -309,13 +379,14 @@ function statusTimeline(status) {
 let pollTimer = null;
 let mapInstance = null;
 let mapMarker = null;
+let destMarker = null;
 let listPollTimer = null;
 
 const LIST_POLL_MS = 4000;
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  if (mapInstance) { mapInstance.remove(); mapInstance = null; mapMarker = null; }
+  if (mapInstance) { mapInstance.remove(); mapInstance = null; mapMarker = null; destMarker = null; }
 }
 
 function stopListPolling() {
@@ -328,65 +399,97 @@ function pollSilently(fn) {
 }
 
 async function viewCustomerOrder(id) {
+  // Skeleton rendered once. Only #order-summary and #status-bar are
+  // re-rendered on each poll so the #map div (with its Leaflet instance)
+  // is never detached.
   render(el(`<section><a href="#/c/orders" class="text-sm text-slate-600">← Orders</a>
-    <div id="body" class="mt-3"></div></section>`));
+    <h1 id="order-title" class="text-xl font-semibold mt-3 mb-2"></h1>
+    <div id="status-bar"></div>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <div id="order-summary" class="bg-white p-4 rounded shadow"></div>
+      <div class="bg-white p-4 rounded shadow">
+        <h2 class="font-semibold mb-2">Live tracking</h2>
+        <div id="map" class="bg-slate-100"></div>
+        <p id="map-note" class="text-xs text-slate-500 mt-2">Map activates when the order is picked up.</p>
+      </div>
+    </div></section>`));
+
   const refresh = async () => {
     try {
       const o = await API.getOrder(id);
+      document.getElementById('order-title').textContent = `Order ${o.id.slice(0,8)}…`;
+      document.getElementById('status-bar').innerHTML = statusTimeline(o.status);
       const itemsHtml = (o.items || []).map(i => `<li class="flex justify-between"><span>${i.quantity}× ${i.name}</span><span>${fmtMoney(parseFloat(i.unit_price)*i.quantity)}</span></li>`).join('');
-      document.getElementById('body').innerHTML = `
-        <h1 class="text-xl font-semibold mb-2">Order ${o.id.slice(0,8)}…</h1>
-        ${statusTimeline(o.status)}
-        <div class="grid md:grid-cols-2 gap-4 mt-4">
-          <div class="bg-white p-4 rounded shadow">
-            <h2 class="font-semibold mb-2">Items</h2>
-            <ul class="text-sm space-y-1">${itemsHtml}</ul>
-            <div class="border-t mt-2 pt-2 text-sm space-y-1">
-              <div class="flex justify-between"><span>Subtotal</span><span>${fmtMoney(o.subtotal)}</span></div>
-              <div class="flex justify-between"><span>Delivery</span><span>${fmtMoney(o.delivery_fee)}</span></div>
-              <div class="flex justify-between font-medium"><span>Total</span><span>${fmtMoney(o.total)}</span></div>
-              <div class="flex justify-between text-slate-600"><span>Paid</span><span>${o.paid ? 'yes' : 'no'}</span></div>
-            </div>
-            ${o.status === 'PENDING' ? `<button id="cancel" class="mt-3 w-full bg-red-600 text-white py-2 rounded text-sm">Cancel order</button>` : ''}
-          </div>
-          <div class="bg-white p-4 rounded shadow">
-            <h2 class="font-semibold mb-2">Live tracking</h2>
-            <div id="map" class="bg-slate-100"></div>
-            <p id="map-note" class="text-xs text-slate-500 mt-2">Map activates when the order is picked up.</p>
-          </div>
-        </div>`;
+      document.getElementById('order-summary').innerHTML = `
+        <h2 class="font-semibold mb-2">Items</h2>
+        <ul class="text-sm space-y-1">${itemsHtml}</ul>
+        <div class="border-t mt-2 pt-2 text-sm space-y-1">
+          <div class="flex justify-between"><span>Subtotal</span><span>${fmtMoney(o.subtotal)}</span></div>
+          <div class="flex justify-between"><span>Delivery</span><span>${fmtMoney(o.delivery_fee)}</span></div>
+          <div class="flex justify-between font-medium"><span>Total</span><span>${fmtMoney(o.total)}</span></div>
+          <div class="flex justify-between text-slate-600"><span>Paid</span><span>${o.paid ? 'yes' : 'no'}</span></div>
+        </div>
+        ${o.status === 'PENDING' ? `<button id="cancel" class="mt-3 w-full bg-red-600 text-white py-2 rounded text-sm">Cancel order</button>` : ''}`;
       const cancelBtn = document.getElementById('cancel');
       if (cancelBtn) cancelBtn.onclick = async () => {
         try { await API.setOrderStatus(o.id, 'CANCELLED'); refresh(); }
         catch (err) { flash(err.message); }
       };
-      if (o.status === 'PICKED_UP' && !pollTimer) startCustomerTracking(o.id);
-      if (o.status !== 'PICKED_UP') stopPolling();
+      const dest = (o.delivery_latitude != null && o.delivery_longitude != null)
+        ? { lat: o.delivery_latitude, lng: o.delivery_longitude } : null;
+      if (o.status === 'PICKED_UP') {
+        if (!pollTimer) startCustomerTracking(o.id, dest);
+      } else {
+        stopPolling();
+      }
     } catch (err) { flash(err.message); }
   };
   await refresh();
   listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
 }
 
-function ensureMap(elId, lat, lng) {
+// Destination marker uses a coloured icon so it's distinguishable from the driver.
+const DEST_ICON = L.divIcon({
+  className: 'fd-dest-icon',
+  html: '<div style="background:#dc2626;width:18px;height:18px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 1px #dc2626"></div>',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
+
+function ensureMap(elId, driver, destination) {
+  // driver/destination are {lat,lng}|null. Either or both may be present.
+  const center = driver || destination;
+  if (!center) return;
   if (!mapInstance) {
-    mapInstance = L.map(elId).setView([lat, lng], 15);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap', maxZoom: 19,
-    }).addTo(mapInstance);
-    mapMarker = L.marker([lat, lng]).addTo(mapInstance);
-  } else {
-    mapMarker.setLatLng([lat, lng]);
-    mapInstance.panTo([lat, lng]);
+    mapInstance = L.map(elId).setView([center.lat, center.lng], 14);
+    L.tileLayer(TILE_URL, { attribution: TILE_ATTR, maxZoom: 19 }).addTo(mapInstance);
+  }
+  if (destination) {
+    if (!destMarker) destMarker = L.marker([destination.lat, destination.lng], { icon: DEST_ICON, title: 'Destination' }).addTo(mapInstance);
+    else destMarker.setLatLng([destination.lat, destination.lng]);
+  }
+  if (driver) {
+    if (!mapMarker) mapMarker = L.marker([driver.lat, driver.lng], { title: 'Driver' }).addTo(mapInstance);
+    else mapMarker.setLatLng([driver.lat, driver.lng]);
+  }
+  // Fit bounds when we have both endpoints; otherwise center on driver.
+  if (driver && destination) {
+    mapInstance.fitBounds([[driver.lat, driver.lng], [destination.lat, destination.lng]], { padding: [30, 30] });
+  } else if (driver) {
+    mapInstance.panTo([driver.lat, driver.lng]);
   }
 }
 
-function startCustomerTracking(orderId) {
+function startCustomerTracking(orderId, destination) {
   document.getElementById('map-note').textContent = 'Polling driver location every 3s.';
+  // Show destination immediately even before any driver fix arrives.
+  if (destination) ensureMap('map', null, destination);
   const tick = async () => {
     try {
       const loc = await API.getLocation(orderId);
-      if (loc && loc.latitude != null) ensureMap('map', loc.latitude, loc.longitude);
+      if (loc && loc.latitude != null) {
+        ensureMap('map', { lat: loc.latitude, lng: loc.longitude }, destination);
+      }
     } catch { /* swallow — driver may not have posted yet */ }
   };
   tick();
@@ -395,9 +498,22 @@ function startCustomerTracking(orderId) {
 
 // ---------- views: restaurant ----------------------------------------------
 
+async function resolveMyRestaurantId() {
+  let myId = localStorage.getItem(RESTAURANT_KEY);
+  if (myId) return myId;
+  try {
+    const r = await API.myRestaurant();
+    localStorage.setItem(RESTAURANT_KEY, r.id);
+    return r.id;
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
 async function viewRestaurantOrders() {
   const u = currentUser();
-  const myId = localStorage.getItem(RESTAURANT_KEY);
+  const myId = await resolveMyRestaurantId();
   if (!myId) return viewRestaurantSetup();
   render(el(`<section><h1 class="text-xl font-semibold mb-4">Restaurant Orders</h1><div id="list" class="space-y-2"></div></section>`));
   const refresh = async () => {
@@ -445,7 +561,7 @@ function restaurantActions(o) {
 
 async function viewRestaurantSetup() {
   render(el(`
-    <section class="max-w-md mx-auto bg-white p-6 rounded shadow">
+    <section class="max-w-2xl mx-auto bg-white p-6 rounded shadow">
       <h1 class="text-xl font-semibold mb-4">Set up your restaurant</h1>
       <form class="space-y-3">
         <input name="name" placeholder="name" required class="w-full border rounded px-3 py-2" />
@@ -453,12 +569,24 @@ async function viewRestaurantSetup() {
         <input name="address" placeholder="address" required class="w-full border rounded px-3 py-2" />
         <input name="cuisine" placeholder="cuisine" required class="w-full border rounded px-3 py-2" />
         <input name="image_url" placeholder="image url (optional)" class="w-full border rounded px-3 py-2" />
+        <div>
+          <label class="block text-sm text-slate-700 mb-1">Pin your location (click the map)</label>
+          <div id="loc-map"></div>
+          <p id="loc-readout" class="text-xs text-slate-500 mt-1">No location picked yet — click the map.</p>
+        </div>
         <button class="w-full bg-slate-900 text-white py-2 rounded">Create</button>
       </form>
     </section>`));
+  let picked = null;
+  pickerMap('loc-map', null, ({ lat, lng }) => {
+    picked = { lat, lng };
+    document.getElementById('loc-readout').textContent =
+      `Picked: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  });
   app().querySelector('form').onsubmit = async (e) => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target).entries());
+    if (picked) { fd.latitude = picked.lat; fd.longitude = picked.lng; }
     try {
       const r = await API.createRestaurant(fd);
       localStorage.setItem(RESTAURANT_KEY, r.id);
@@ -473,10 +601,13 @@ async function viewRestaurantSetup() {
 }
 
 async function viewRestaurantMenu() {
-  const myId = localStorage.getItem(RESTAURANT_KEY);
+  const myId = await resolveMyRestaurantId();
   if (!myId) return viewRestaurantSetup();
   render(el(`<section>
-    <h1 class="text-xl font-semibold mb-4">Menu</h1>
+    <div class="flex items-center justify-between mb-4">
+      <h1 class="text-xl font-semibold">Menu</h1>
+      <button id="open-toggle" class="text-sm px-3 py-1 rounded bg-slate-200 text-slate-700">…</button>
+    </div>
     <div class="bg-white p-4 rounded shadow mb-4">
       <h2 class="font-medium mb-2">Add item</h2>
       <form id="add" class="grid sm:grid-cols-2 gap-2">
@@ -519,6 +650,23 @@ async function viewRestaurantMenu() {
       });
     } catch (err) { flash(err.message); }
   };
+  const renderOpenToggle = (isOpen) => {
+    const btn = document.getElementById('open-toggle');
+    btn.textContent = isOpen ? 'Open — accepting orders' : 'Closed — click to open';
+    btn.className = 'text-sm px-3 py-1 rounded ' + (isOpen ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-800');
+    btn.onclick = async () => {
+      try {
+        const updated = await API.patchRestaurant(myId, { is_open: !isOpen });
+        renderOpenToggle(updated.is_open);
+        flash(updated.is_open ? 'Now accepting orders' : 'Closed', 'ok');
+      } catch (err) { flash(err.message); }
+    };
+  };
+  try {
+    const r = await API.getRestaurant(myId);
+    renderOpenToggle(!!r.is_open);
+  } catch (err) { flash(err.message); }
+
   document.getElementById('add').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -576,18 +724,73 @@ let geoWatchId = null;
 let postTimer = null;
 let lastFix = null;
 
+// DEMO ONLY: set per-order by the toggle button on the delivery order view.
+// Persisted across page reloads so the chosen mode survives a refresh.
+const SIM_KEY = 'fd.simulatedDelivery';
+let simTimer = null;
+// Tracks which order's sim has finished so the polling refresh in
+// viewDeliveryOrder doesn't keep restarting it from 0% in a loop.
+let simDoneOrderId = null;
+
+function isSimulated() { return localStorage.getItem(SIM_KEY) === '1'; }
+function setSimulated(v) {
+  if (v) localStorage.setItem(SIM_KEY, '1');
+  else   localStorage.removeItem(SIM_KEY);
+}
+
 function stopGeo() {
   if (geoWatchId != null) { navigator.geolocation.clearWatch(geoWatchId); geoWatchId = null; }
   if (postTimer) { clearInterval(postTimer); postTimer = null; }
+  if (simTimer) { clearInterval(simTimer); simTimer = null; }
   lastFix = null;
+  simDoneOrderId = null;
+}
+
+// DEMO ONLY: linearly interpolate driver position from `from` to `to` over
+// SIM_DURATION_MS, posting every SIM_TICK_MS. Real geolocation is not used
+// in this mode — this exists purely so the demo can show movement on the map
+// without the delivery user actually walking around.
+const SIM_DURATION_MS = 90_000;
+const SIM_TICK_MS = 2_000;
+function startSimulatedDelivery(orderId, from, to) {
+  if (simTimer) return;
+  if (simDoneOrderId === orderId) return; // already completed this order
+  const t0 = Date.now();
+  const tick = async () => {
+    const t = Math.min(1, (Date.now() - t0) / SIM_DURATION_MS);
+    const lat = from.lat + (to.lat - from.lat) * t;
+    const lng = from.lng + (to.lng - from.lng) * t;
+    // Re-query each tick — innerHTML re-renders during polling replace the node.
+    const el = document.getElementById('geo-status');
+    if (el) el.textContent =
+      `Simulated (demo): ${lat.toFixed(5)}, ${lng.toFixed(5)} — ${(t * 100).toFixed(0)}%`;
+    try { await API.postLocation(orderId, { latitude: lat, longitude: lng }); } catch {}
+    if (t >= 1 && simTimer) {
+      clearInterval(simTimer); simTimer = null;
+      simDoneOrderId = orderId;
+    }
+  };
+  tick();
+  simTimer = setInterval(tick, SIM_TICK_MS);
 }
 
 async function viewDeliveryOrder(id) {
   render(el(`<section><a href="#/d/orders" class="text-sm text-slate-600">← Deliveries</a>
     <div id="body" class="mt-3"></div></section>`));
+  let restaurant = null;
   const refresh = async () => {
     try {
       const o = await API.getOrder(id);
+      if (!restaurant || restaurant.id !== o.restaurant_id) {
+        try { restaurant = await API.getRestaurant(o.restaurant_id); } catch { restaurant = null; }
+      }
+      const sim = isSimulated();
+      const dest = (o.delivery_latitude != null && o.delivery_longitude != null)
+        ? { lat: o.delivery_latitude, lng: o.delivery_longitude } : null;
+      const from = (restaurant && restaurant.latitude != null && restaurant.longitude != null)
+        ? { lat: restaurant.latitude, lng: restaurant.longitude } : null;
+      const canSim = !!(from && dest);
+
       document.getElementById('body').innerHTML = `
         <h1 class="text-xl font-semibold mb-2">Order ${o.id.slice(0,8)}…</h1>
         ${statusTimeline(o.status)}
@@ -597,7 +800,12 @@ async function viewDeliveryOrder(id) {
           <div class="mt-3 flex gap-2">${deliveryActions(o)}</div>
         </div>
         <div class="bg-white p-4 rounded shadow mt-4">
-          <h2 class="font-semibold mb-2">Live location</h2>
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <h2 class="font-semibold">Live location</h2>
+            <button id="sim-toggle" class="text-xs px-2 py-1 rounded ${sim ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-700'}" ${canSim ? '' : 'disabled title="Restaurant or destination missing coordinates"'}>
+              ${sim ? 'Simulated (demo) — switch to real GPS' : 'Use simulated path (demo)'}
+            </button>
+          </div>
           <p id="geo-status" class="text-xs text-slate-500"></p>
         </div>`;
       document.getElementById('body').querySelectorAll('button[data-act]').forEach(b => {
@@ -606,8 +814,24 @@ async function viewDeliveryOrder(id) {
           catch (err) { flash(err.message); }
         };
       });
-      if (o.status === 'PICKED_UP') startDeliveryTracking(o.id);
-      else stopGeo();
+      const toggleBtn = document.getElementById('sim-toggle');
+      if (toggleBtn && !toggleBtn.disabled) {
+        toggleBtn.onclick = () => {
+          setSimulated(!isSimulated());
+          stopGeo();
+          refresh();
+        };
+      }
+
+      if (o.status === 'PICKED_UP') {
+        if (sim && canSim) {
+          startSimulatedDelivery(o.id, from, dest);
+        } else {
+          startDeliveryTracking(o.id, from);
+        }
+      } else {
+        stopGeo();
+      }
     } catch (err) { flash(err.message); }
   };
   await refresh();
@@ -624,12 +848,21 @@ function deliveryActions(o) {
   }
 }
 
-function startDeliveryTracking(orderId) {
+function startDeliveryTracking(orderId, restaurantOrigin) {
+  if (geoWatchId != null) return;
+  // Seed the customer's map with the restaurant's location until the first
+  // real GPS fix arrives — otherwise the marker is missing for the first
+  // few seconds after pickup.
+  if (restaurantOrigin) {
+    API.postLocation(orderId, {
+      latitude: restaurantOrigin.lat,
+      longitude: restaurantOrigin.lng,
+    }).catch(() => {});
+  }
   if (!navigator.geolocation) {
     document.getElementById('geo-status').textContent = 'Geolocation not supported.';
     return;
   }
-  if (geoWatchId != null) return;
   document.getElementById('geo-status').textContent = 'Acquiring GPS…';
   geoWatchId = navigator.geolocation.watchPosition(
     (pos) => {

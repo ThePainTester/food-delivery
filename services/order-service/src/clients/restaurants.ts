@@ -6,6 +6,11 @@ export interface MenuItemSnapshot {
   is_available: boolean;
 }
 
+export interface RestaurantSnapshot {
+  id: string;
+  is_open: boolean;
+}
+
 export class RestaurantClient {
   constructor(private baseUrl: string) {}
 
@@ -14,6 +19,13 @@ export class RestaurantClient {
     if (res.status === 404) throw new RestaurantNotFoundError();
     if (!res.ok) throw new Error(`restaurant service error: ${res.status}`);
     return (await res.json()) as MenuItemSnapshot[];
+  }
+
+  async getRestaurant(restaurantId: string): Promise<RestaurantSnapshot> {
+    const res = await fetch(`${this.baseUrl}/restaurants/${restaurantId}`);
+    if (res.status === 404) throw new RestaurantNotFoundError();
+    if (!res.ok) throw new Error(`restaurant service error: ${res.status}`);
+    return (await res.json()) as RestaurantSnapshot;
   }
 
   /**

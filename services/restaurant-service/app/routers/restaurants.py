@@ -20,6 +20,22 @@ def _db(request: Request):
     return request.app.state.mongo.db
 
 
+@router.get("/mine", response_model=Restaurant)
+async def get_my_restaurant(
+    request: Request,
+    principal: Principal = Depends(require_role("restaurant")),
+):
+    """Returns the authenticated owner's restaurant. 404 if they haven't
+    created one yet — the SPA uses this to recover the restaurant_id after
+    logging out (localStorage is cleared on logout)."""
+    doc = await _db(request).restaurants.find_one(
+        {"owner_id": UUID(principal.user_id)}
+    )
+    if not doc:
+        raise not_found("no restaurant for this owner")
+    return Restaurant.model_validate(doc)
+
+
 @router.get("", response_model=list[RestaurantPublic])
 async def list_restaurants(
     request: Request,
@@ -78,6 +94,8 @@ async def create_restaurant(
         "image_url": body.image_url,
         "is_open": False,
         "created_at": datetime.now(timezone.utc),
+        "latitude": body.latitude,
+        "longitude": body.longitude,
     }
     await _db(request).restaurants.insert_one(doc)
     return Restaurant.model_validate(doc)

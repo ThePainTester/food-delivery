@@ -19,6 +19,8 @@ const createOrderSchema = z.object({
     )
     .min(1),
   delivery_address: z.string().min(1),
+  delivery_latitude: z.number().min(-90).max(90).optional(),
+  delivery_longitude: z.number().min(-180).max(180).optional(),
 });
 
 const patchStatusSchema = z.object({
@@ -59,6 +61,8 @@ function toApi(r: OrderRow) {
     status: r.status,
     paid: r.paid,
     delivery_address: r.delivery_address,
+    delivery_latitude: r.delivery_latitude,
+    delivery_longitude: r.delivery_longitude,
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
@@ -80,6 +84,8 @@ export function ordersRouter(deps: Deps): Router {
         restaurantId: body.restaurant_id,
         items: body.items.map((i) => ({ menuItemId: i.menu_item_id, quantity: i.quantity })),
         deliveryAddress: body.delivery_address,
+        deliveryLatitude: body.delivery_latitude ?? null,
+        deliveryLongitude: body.delivery_longitude ?? null,
       });
       res.status(201).json(toApi(order));
     } catch (e) {

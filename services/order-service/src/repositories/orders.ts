@@ -21,6 +21,8 @@ export interface OrderRow {
   status: OrderStatus;
   paid: boolean;
   delivery_address: string;
+  delivery_latitude: number | null;
+  delivery_longitude: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,7 +35,8 @@ export interface OrderOwners {
 
 const RETURNING = `id, customer_id, restaurant_id, delivery_user_id, items,
   subtotal_cents::text, delivery_fee_cents::text, total_cents::text,
-  status, paid, delivery_address, created_at, updated_at`;
+  status, paid, delivery_address, delivery_latitude, delivery_longitude,
+  created_at, updated_at`;
 
 export class OrdersRepo {
   constructor(private pool: Pool) {}
@@ -47,13 +50,15 @@ export class OrdersRepo {
     deliveryFeeCents: number;
     totalCents: number;
     deliveryAddress: string;
+    deliveryLatitude?: number | null;
+    deliveryLongitude?: number | null;
   }): Promise<OrderRow> {
     const { rows } = await this.pool.query<OrderRow>(
       `INSERT INTO orders (
           id, customer_id, restaurant_id, items,
           subtotal_cents, delivery_fee_cents, total_cents,
-          status, delivery_address
-       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,'PENDING',$8)
+          status, delivery_address, delivery_latitude, delivery_longitude
+       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,'PENDING',$8,$9,$10)
        RETURNING ${RETURNING}`,
       [
         input.id,
@@ -64,6 +69,8 @@ export class OrdersRepo {
         input.deliveryFeeCents,
         input.totalCents,
         input.deliveryAddress,
+        input.deliveryLatitude ?? null,
+        input.deliveryLongitude ?? null,
       ],
     );
     return rows[0];

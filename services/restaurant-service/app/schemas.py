@@ -25,6 +25,8 @@ class RestaurantCreate(BaseModel):
     address: str
     cuisine: str
     image_url: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class RestaurantUpdate(BaseModel):
@@ -36,6 +38,8 @@ class RestaurantUpdate(BaseModel):
     cuisine: str | None = None
     image_url: str | None = None
     is_open: bool | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class RestaurantPublic(_MongoModel):
@@ -49,6 +53,8 @@ class RestaurantPublic(_MongoModel):
     image_url: str
     is_open: bool
     created_at: datetime
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class Restaurant(RestaurantPublic):
