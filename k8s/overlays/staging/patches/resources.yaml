@@ -1,0 +1,53 @@
+# Medium resource bump for test — closer to prod sizing without the replica
+# count, so integration runs are realistic but fit on a laptop.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: user-service
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 750m, memory: 384Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restaurant-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: restaurant-service
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits:   { cpu: 750m, memory: 512Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: order-service
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits:   { cpu: 750m, memory: 512Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: payment-service
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 750m, memory: 384Mi }

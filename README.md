@@ -92,3 +92,105 @@ dev (8081–8084) for direct testing, but the browser doesn't use them.
 See [`compose/README.md`](compose/README.md) for the full port map and
 [`services/frontend/README.md`](services/frontend/README.md) for SPA
 routes.
+
+## Kubernetes (Minikube)
+
+The Compose stack is the local-first iteration loop. The Kustomize tree
+under `k8s/` deploys the same images to a Kubernetes cluster, with three
+overlays (`dev` / `test` / `prod`) that each live in their own namespace and
+their own ingress host so all three can run side-by-side on one Minikube.
+
+### Prerequisites
+
+```bash
+minikube start
+minikube addons enable ingress       # NGINX Ingress controller
+```
+
+### Build images into Minikube's Docker daemon
+
+The dev/staging overlays use `imagePullPolicy: IfNotPresent` and reference
+local image tags (`:dev`, `:staging`). Build them inside Minikube's daemon so
+the cluster can find them without a registry:
+
+```bash
+eval $(minikube docker-env)
+
+# Same Compose build, tagged for k8s/dev:
+docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
+  --env-file compose/.env.dev build
+
+# Re-tag with the dev/staging tags the overlays expect:
+for svc in user-service restaurant-service order-service payment-service frontend; do
+  docker tag food-delivery/${svc}:latest food-delivery/${svc}:dev
+  docker tag food-delivery/${svc}:latest food-delivery/${svc}:staging
+done
+```
+
+(For prod, push to a real registry and pin the image with
+`kustomize edit set image food-delivery/user-service=registry.example.com/user-service:v1.4.2`
+inside `k8s/overlays/prod/` before applying.)
+
+### Replace the JWT keypair stub
+
+`k8s/base/secrets/jwt-keypair.yaml` ships with placeholder strings so
+`kubectl kustomize` doesn't error out before you've configured anything.
+Generate real RS256 keys and inline them, or apply a separately-managed
+Secret of the same name:
+
+```bash
+openssl genpkey -algorithm RSA -out /tmp/jwt.key -pkeyopt rsa_keygen_bits:2048
+openssl rsa -in /tmp/jwt.key -pubout -out /tmp/jwt.pub
+# then paste the file contents into k8s/base/secrets/jwt-keypair.yaml
+```
+
+### Deploy an overlay
+
+```bash
+kubectl apply -k k8s/overlays/dev
+kubectl apply -k k8s/overlays/staging
+kubectl apply -k k8s/overlays/prod
+```
+
+(`kustomize build … | kubectl apply -f -` works the same way.)
+
+Schema migrations run automatically: each app Deployment has an
+`initContainers:` block that runs [`golang-migrate`](https://github.com/golang-migrate/migrate)
+against the right Postgres before the app container starts. The `migrate`
+binary and the `migrations/*.up.sql` files are baked into each service
+image at build time, so no Kustomize ConfigMap or cross-directory file
+access is needed. Re-applying is safe — `migrate` tracks applied versions
+in a `schema_migrations` table on the target DB.
+
+### `/etc/hosts` entries
+
+Each overlay serves on its own host, mapped to the Minikube IP
+(`minikube ip`):
+
+```
+$(minikube ip)  dev.food-delivery.local
+$(minikube ip)  staging.food-delivery.local
+$(minikube ip)  food-delivery.local
+```
+
+Then browse to <http://dev.food-delivery.local>, <http://staging.food-delivery.local>,
+or <http://food-delivery.local>.
+
+### Inspect a single env
+
+```bash
+kubectl get all -n food-delivery-dev
+kubectl logs -n food-delivery-dev deploy/order-service -f
+kubectl exec -n food-delivery-dev -it statefulset/orders-db -- psql -U orders -d orders
+```
+
+### Tear down a single env
+
+```bash
+kubectl delete -k k8s/overlays/dev
+# Or namespace-delete (slower but tidier):
+kubectl delete namespace food-delivery-dev
+```
+
+> Deleting the namespace also removes the PVCs, so all persistent state
+> (restaurant docs, orders, payments, RabbitMQ queue files) is wiped.

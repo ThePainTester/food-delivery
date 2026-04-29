@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-cache
+  labels:
+    app: orders-cache
+spec:
+  # Cache only — losing it means at most a stale-driver-location blip.
+  # Hence Deployment + emptyDir, no PVC.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orders-cache
+  template:
+    metadata:
+      labels:
+        app: orders-cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+      volumes:
+        - name: data
+          emptyDir: {}

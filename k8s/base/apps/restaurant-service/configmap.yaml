@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restaurant-service-config
+data:
+  PORT: "8080"
+  MONGO_DB: restaurants
+  JWT_ISSUER: user-service
+  JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+  # Ingress strips /api before forwarding (rewrite-target). The service still
+  # advertises /api in 307 redirect Locations via FastAPI's root_path.
+  ROOT_PATH: /api
+  LOG_LEVEL: info

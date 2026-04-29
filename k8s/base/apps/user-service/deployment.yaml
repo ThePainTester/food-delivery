@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  labels:
+    app: user-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      # Run versioned migrations against users-db before the app starts.
+      # Reuses the same image (which bakes in `migrate` and /migrations) with
+      # an overridden command. Idempotent — golang-migrate tracks applied
+      # versions in a `schema_migrations` table on the target DB.
+      initContainers:
+        - name: migrate
+          image: food-delivery/user-service:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/migrate"]
+          args:
+            - "-path=/migrations"
+            - "-database=$(DATABASE_URL)"
+            - "up"
+          env:
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@users-db:5432/users?sslmode=disable
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: users-db-credentials, key: username }
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: users-db-credentials, key: password }
+      containers:
+        - name: user-service
+          # Overlays patch the tag (:dev / :staging / pinned). The image rewriter
+          # also rewrites the initContainer above since it references the same
+          # image name.
+          image: food-delivery/user-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: user-service-config
+          env:
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@users-db:5432/users?sslmode=disable
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: users-db-credentials, key: username }
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: users-db-credentials, key: password }
+          volumeMounts:
+            - name: jwt
+              mountPath: /run/jwt
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: jwt
+          secret:
+            secretName: jwt-keypair
+            defaultMode: 0o400

@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restaurant-service
+  labels:
+    app: restaurant-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restaurant-service
+  template:
+    metadata:
+      labels:
+        app: restaurant-service
+    spec:
+      containers:
+        - name: restaurant-service
+          image: food-delivery/restaurant-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: restaurant-service-config
+          env:
+            - name: MONGO_URL
+              value: mongodb://$(MONGO_USER):$(MONGO_PASSWORD)@restaurants-db:27017/restaurants?authSource=admin
+            - name: MONGO_USER
+              valueFrom:
+                secretKeyRef: { name: restaurants-db-credentials, key: username }
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: restaurants-db-credentials, key: password }
+          volumeMounts:
+            - name: jwt
+              mountPath: /run/jwt
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+      volumes:
+        - name: jwt
+          secret:
+            secretName: jwt-keypair
+            defaultMode: 0o400
+            items:
+              - key: jwt.pub
+                path: jwt.pub

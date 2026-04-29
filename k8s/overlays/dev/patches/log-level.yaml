@@ -1,0 +1,29 @@
+# Verbose logging in dev. Per-service ConfigMap merges only override the
+# fields listed here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+data:
+  LOG_LEVEL: debug
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restaurant-service-config
+data:
+  LOG_LEVEL: debug
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-service-config
+data:
+  LOG_LEVEL: debug
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-service-config
+data:
+  LOG_LEVEL: debug

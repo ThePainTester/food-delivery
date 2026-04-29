@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: food-delivery-dev
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+# Local Minikube images built via `eval $(minikube docker-env)` then
+# `docker compose --env-file compose/.env.dev build`.
+images:
+  - name: food-delivery/user-service
+    newTag: dev
+  - name: food-delivery/restaurant-service
+    newTag: dev
+  - name: food-delivery/order-service
+    newTag: dev
+  - name: food-delivery/payment-service
+    newTag: dev
+  - name: food-delivery/frontend
+    newTag: dev
+
+# Base already defaults to replicas: 1, so nothing to override here.
+# Resources are deliberately small for laptops.
+patches:
+  - path: patches/log-level.yaml
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: food-delivery

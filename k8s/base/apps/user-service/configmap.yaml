@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+data:
+  PORT: "8080"
+  JWT_ISSUER: user-service
+  JWT_PRIVATE_KEY_PATH: /run/jwt/jwt.key
+  JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+  LOG_LEVEL: info

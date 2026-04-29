@@ -1,0 +1,5 @@
+# Each env serves on its own host so all three overlays can run on one
+# Minikube without colliding at the ingress layer.
+- op: replace
+  path: /spec/rules/0/host
+  value: dev.food-delivery.local

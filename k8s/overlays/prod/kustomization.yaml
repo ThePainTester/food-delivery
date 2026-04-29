@@ -1,0 +1,52 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: food-delivery-prod
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+# Image tags are pinned via the kustomize CLI before apply, e.g.
+#   kustomize edit set image food-delivery/user-service=registry.example.com/user-service:v1.4.2
+# (and similar for the others). The `latest` placeholder here exists only so
+# `kustomize build` doesn't error before pinning.
+images:
+  - name: food-delivery/user-service
+    newName: REGISTRY_PLACEHOLDER/user-service
+    newTag: latest
+  - name: food-delivery/restaurant-service
+    newName: REGISTRY_PLACEHOLDER/restaurant-service
+    newTag: latest
+  - name: food-delivery/order-service
+    newName: REGISTRY_PLACEHOLDER/order-service
+    newTag: latest
+  - name: food-delivery/payment-service
+    newName: REGISTRY_PLACEHOLDER/payment-service
+    newTag: latest
+  - name: food-delivery/frontend
+    newName: REGISTRY_PLACEHOLDER/frontend
+    newTag: latest
+
+# Replicas: 2 for stateless backends + frontend; stateful infra stays at 1
+# (a single Postgres/Mongo/Rabbit per env is intentional — replication is
+# out of scope for this phase).
+replicas:
+  - name: user-service
+    count: 2
+  - name: restaurant-service
+    count: 2
+  - name: order-service
+    count: 2
+  - name: payment-service
+    count: 2
+  - name: frontend
+    count: 2
+
+patches:
+  - path: patches/resources.yaml
+  - path: patches/log-level.yaml
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: food-delivery

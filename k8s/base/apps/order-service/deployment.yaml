@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  labels:
+    app: order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      initContainers:
+        - name: migrate
+          image: food-delivery/order-service:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/migrate"]
+          args:
+            - "-path=/migrations"
+            - "-database=$(DATABASE_URL)"
+            - "up"
+          env:
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@orders-db:5432/orders?sslmode=disable
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: orders-db-credentials, key: username }
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: orders-db-credentials, key: password }
+      containers:
+        - name: order-service
+          image: food-delivery/order-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: order-service-config
+          env:
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@orders-db:5432/orders?sslmode=disable
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: orders-db-credentials, key: username }
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: orders-db-credentials, key: password }
+            - name: RABBIT_URL
+              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@rabbitmq:5672
+            - name: RABBIT_USER
+              valueFrom:
+                secretKeyRef: { name: rabbitmq-credentials, key: username }
+            - name: RABBIT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: rabbitmq-credentials, key: password }
+          volumeMounts:
+            - name: jwt
+              mountPath: /run/jwt
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+      volumes:
+        - name: jwt
+          secret:
+            secretName: jwt-keypair
+            defaultMode: 0o400
+            items:
+              - key: jwt.pub
+                path: jwt.pub

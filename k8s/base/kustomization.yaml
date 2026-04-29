@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - secrets
+
+  - infra/postgres-user
+  - infra/postgres-order
+  - infra/postgres-payment
+  - infra/mongodb
+  - infra/redis
+  - infra/rabbitmq
+
+  - apps/user-service
+  - apps/restaurant-service
+  - apps/order-service
+  - apps/payment-service
+  - apps/frontend
+
+  - ingress
+
+# Common labels applied to every resource — useful for cross-cutting selection
+# (e.g. `kubectl get all -l app.kubernetes.io/part-of=food-delivery -n food-delivery-dev`).
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: food-delivery

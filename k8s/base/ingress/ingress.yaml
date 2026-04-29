@@ -1,0 +1,64 @@
+# Single Ingress per overlay. The `host` is patched per environment in the
+# overlay (dev.food-delivery.local / staging.food-delivery.local /
+# food-delivery.local) so all three can run side-by-side on one Minikube.
+#
+# /api/<svc>/(.*) -> service-svc:8080/$1   (the regex strips /api/<svc>)
+# /                -> frontend:80
+#
+# This mirrors the compose `strip-api` middleware: backends receive their
+# native path layout (e.g. /auth/login at user-service, not /api/auth/login).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: food-delivery
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: food-delivery.local
+      http:
+        paths:
+          - pathType: ImplementationSpecific
+            path: /api/users(/|$)(.*)
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8080
+          - pathType: ImplementationSpecific
+            path: /api/auth(/|$)(.*)
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8080
+          - pathType: ImplementationSpecific
+            path: /api/restaurants(/|$)(.*)
+            backend:
+              service:
+                name: restaurant-service
+                port:
+                  number: 8080
+          - pathType: ImplementationSpecific
+            path: /api/orders(/|$)(.*)
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: 8080
+          - pathType: ImplementationSpecific
+            path: /api/payments(/|$)(.*)
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: 8080
+          - pathType: ImplementationSpecific
+            path: /()(.*)
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
