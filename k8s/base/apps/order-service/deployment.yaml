@@ -14,7 +14,22 @@ spec:
       labels:
         app: order-service
     spec:
+      securityContext:
+        fsGroup: 10001
       initContainers:
+        - name: wait-for-db
+          image: postgres:16-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              until pg_isready -h orders-db -p 5432 -U "$DB_USER" -d orders -t 2; do
+                echo "waiting for orders-db..."
+                sleep 2
+              done
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: orders-db-credentials, key: username }
         - name: migrate
           image: food-delivery/order-service:latest
           imagePullPolicy: IfNotPresent
@@ -24,14 +39,14 @@ spec:
             - "-database=$(DATABASE_URL)"
             - "up"
           env:
-            - name: DATABASE_URL
-              value: postgres://$(DB_USER):$(DB_PASSWORD)@orders-db:5432/orders?sslmode=disable
             - name: DB_USER
               valueFrom:
                 secretKeyRef: { name: orders-db-credentials, key: username }
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef: { name: orders-db-credentials, key: password }
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@orders-db:5432/orders?sslmode=disable
       containers:
         - name: order-service
           image: food-delivery/order-service:latest
@@ -43,22 +58,22 @@ spec:
             - configMapRef:
                 name: order-service-config
           env:
-            - name: DATABASE_URL
-              value: postgres://$(DB_USER):$(DB_PASSWORD)@orders-db:5432/orders?sslmode=disable
             - name: DB_USER
               valueFrom:
                 secretKeyRef: { name: orders-db-credentials, key: username }
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef: { name: orders-db-credentials, key: password }
-            - name: RABBIT_URL
-              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@rabbitmq:5672
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@orders-db:5432/orders?sslmode=disable
             - name: RABBIT_USER
               valueFrom:
                 secretKeyRef: { name: rabbitmq-credentials, key: username }
             - name: RABBIT_PASSWORD
               valueFrom:
                 secretKeyRef: { name: rabbitmq-credentials, key: password }
+            - name: RABBIT_URL
+              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@rabbitmq:5672
           volumeMounts:
             - name: jwt
               mountPath: /run/jwt

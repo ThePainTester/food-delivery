@@ -14,7 +14,22 @@ spec:
       labels:
         app: payment-service
     spec:
+      securityContext:
+        fsGroup: 10001
       initContainers:
+        - name: wait-for-db
+          image: postgres:16-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              until pg_isready -h payments-db -p 5432 -U "$DB_USER" -d payments -t 2; do
+                echo "waiting for payments-db..."
+                sleep 2
+              done
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: payments-db-credentials, key: username }
         - name: migrate
           image: food-delivery/payment-service:latest
           imagePullPolicy: IfNotPresent
@@ -24,14 +39,14 @@ spec:
             - "-database=$(DATABASE_URL)"
             - "up"
           env:
-            - name: DATABASE_URL
-              value: postgres://$(DB_USER):$(DB_PASSWORD)@payments-db:5432/payments?sslmode=disable
             - name: DB_USER
               valueFrom:
                 secretKeyRef: { name: payments-db-credentials, key: username }
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef: { name: payments-db-credentials, key: password }
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@payments-db:5432/payments?sslmode=disable
       containers:
         - name: payment-service
           image: food-delivery/payment-service:latest
@@ -43,22 +58,22 @@ spec:
             - configMapRef:
                 name: payment-service-config
           env:
-            - name: DATABASE_URL
-              value: postgres://$(DB_USER):$(DB_PASSWORD)@payments-db:5432/payments?sslmode=disable
             - name: DB_USER
               valueFrom:
                 secretKeyRef: { name: payments-db-credentials, key: username }
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef: { name: payments-db-credentials, key: password }
-            - name: RABBIT_URL
-              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@rabbitmq:5672
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@payments-db:5432/payments?sslmode=disable
             - name: RABBIT_USER
               valueFrom:
                 secretKeyRef: { name: rabbitmq-credentials, key: username }
             - name: RABBIT_PASSWORD
               valueFrom:
                 secretKeyRef: { name: rabbitmq-credentials, key: password }
+            - name: RABBIT_URL
+              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@rabbitmq:5672
           volumeMounts:
             - name: jwt
               mountPath: /run/jwt
