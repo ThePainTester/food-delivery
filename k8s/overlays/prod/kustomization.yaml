@@ -7,26 +7,22 @@ resources:
   - namespace.yaml
   - ../../base
 
-# Image tags are pinned via the kustomize CLI before apply, e.g.
-#   kustomize edit set image food-delivery/user-service=registry.example.com/user-service:v1.4.2
-# (and similar for the others). The `latest` placeholder here exists only so
-# `kustomize build` doesn't error before pinning.
 images:
   - name: food-delivery/user-service
-    newName: REGISTRY_PLACEHOLDER/user-service
-    newTag: latest
+    newName: ghcr.io/thepaintester/user-service
+    newTag: v1.0.0
   - name: food-delivery/restaurant-service
-    newName: REGISTRY_PLACEHOLDER/restaurant-service
-    newTag: latest
+    newName: ghcr.io/thepaintester/restaurant-service
+    newTag: v1.0.0
   - name: food-delivery/order-service
-    newName: REGISTRY_PLACEHOLDER/order-service
-    newTag: latest
+    newName: ghcr.io/thepaintester/order-service
+    newTag: v1.0.0
   - name: food-delivery/payment-service
-    newName: REGISTRY_PLACEHOLDER/payment-service
-    newTag: latest
+    newName: ghcr.io/thepaintester/payment-service
+    newTag: v1.0.0
   - name: food-delivery/frontend
-    newName: REGISTRY_PLACEHOLDER/frontend
-    newTag: latest
+    newName: ghcr.io/thepaintester/frontend
+    newTag: v1.0.0
 
 # Replicas: 2 for stateless backends + frontend; stateful infra stays at 1
 # (a single Postgres/Mongo/Rabbit per env is intentional — replication is
@@ -50,3 +46,6 @@ patches:
     target:
       kind: Ingress
       name: food-delivery
+  - path: patches/image-pull-secrets.yaml
+    target:
+      kind: Deployment

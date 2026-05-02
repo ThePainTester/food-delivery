@@ -9,15 +9,20 @@ resources:
 
 images:
   - name: food-delivery/user-service
-    newTag: staging
+    newName: ghcr.io/thepaintester/user-service
+    newTag: v1.0.0
   - name: food-delivery/restaurant-service
-    newTag: staging
+    newName: ghcr.io/thepaintester/restaurant-service
+    newTag: v1.0.0
   - name: food-delivery/order-service
-    newTag: staging
+    newName: ghcr.io/thepaintester/order-service
+    newTag: v1.0.0
   - name: food-delivery/payment-service
-    newTag: staging
+    newName: ghcr.io/thepaintester/payment-service
+    newTag: v1.0.0
   - name: food-delivery/frontend
-    newTag: staging
+    newName: ghcr.io/thepaintester/frontend
+    newTag: v1.0.0
 
 patches:
   - path: patches/resources.yaml
@@ -25,3 +30,6 @@ patches:
     target:
       kind: Ingress
       name: food-delivery
+  - path: patches/image-pull-secrets.yaml
+    target:
+      kind: Deployment

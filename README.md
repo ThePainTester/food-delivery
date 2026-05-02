@@ -144,6 +144,31 @@ openssl rsa -in /tmp/jwt.key -pubout -out /tmp/jwt.pub
 # then paste the file contents into k8s/base/secrets/jwt-keypair.yaml
 ```
 
+### Private registry credentials (staging / prod)
+
+The `staging` and `prod` overlays patch every Deployment with
+`imagePullSecrets: [{name: ghcr-credentials}]` so kubelet can pull from your
+private registry. The Secret itself is *not* in git — create it once per
+namespace before the first apply:
+
+```bash
+# GitHub Container Registry example — username is your GitHub login,
+# password is a Personal Access Token with `read:packages` scope.
+for ns in food-delivery-staging food-delivery-prod; do
+  kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret docker-registry ghcr-credentials \
+    --docker-server=ghcr.io \
+    --docker-username=YOUR_GITHUB_USERNAME \
+    --docker-password=YOUR_GITHUB_PAT \
+    --namespace="$ns"
+done
+```
+
+For other registries, change `--docker-server` accordingly
+(`docker.io` for Docker Hub, `<account>.dkr.ecr.<region>.amazonaws.com` for
+ECR, etc.). The `dev` overlay doesn't need this — it builds into Minikube's
+local Docker daemon and pulls nothing.
+
 ### Deploy an overlay
 
 ```bash

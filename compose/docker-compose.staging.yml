@@ -16,23 +16,23 @@ services:
     restart: unless-stopped
 
   user-service:
-    image: ${REGISTRY}/user-service:${IMAGE_TAG:-staging}
+    image: ${REGISTRY:-food-delivery}/user-service:${IMAGE_TAG:-staging}
     restart: unless-stopped
 
   restaurant-service:
-    image: ${REGISTRY}/restaurant-service:${IMAGE_TAG:-staging}
+    image: ${REGISTRY:-food-delivery}/restaurant-service:${IMAGE_TAG:-staging}
     restart: unless-stopped
 
   order-service:
-    image: ${REGISTRY}/order-service:${IMAGE_TAG:-staging}
+    image: ${REGISTRY:-food-delivery}/order-service:${IMAGE_TAG:-staging}
     restart: unless-stopped
 
   payment-service:
-    image: ${REGISTRY}/payment-service:${IMAGE_TAG:-staging}
+    image: ${REGISTRY:-food-delivery}/payment-service:${IMAGE_TAG:-staging}
     restart: unless-stopped
 
   frontend:
-    image: ${REGISTRY}/frontend:${IMAGE_TAG:-staging}
+    image: ${REGISTRY:-food-delivery}/frontend:${IMAGE_TAG:-staging}
     restart: unless-stopped
 
   gateway:
