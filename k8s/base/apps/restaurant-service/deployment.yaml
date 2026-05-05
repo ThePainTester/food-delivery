@@ -80,9 +80,9 @@ spec:
               memory: 384Mi
       volumes:
         - name: jwt
-          secret:
-            secretName: jwt-keypair
-            defaultMode: 0o400
+          configMap:
+            name: jwt-pubkey
+            defaultMode: 0o444
             items:
               - key: jwt.pub
                 path: jwt.pub

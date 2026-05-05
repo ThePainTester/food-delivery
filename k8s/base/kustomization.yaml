@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - secrets
+  - jwt-pubkey.yaml
 
   - infra/postgres-user
   - infra/postgres-order

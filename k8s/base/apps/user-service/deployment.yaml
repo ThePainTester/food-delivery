@@ -105,6 +105,16 @@ spec:
               memory: 256Mi
       volumes:
         - name: jwt
-          secret:
-            secretName: jwt-keypair
+          projected:
             defaultMode: 0o400
+            sources:
+              - secret:
+                  name: jwt-privkey
+                  items:
+                    - key: jwt.key
+                      path: jwt.key
+              - configMap:
+                  name: jwt-pubkey
+                  items:
+                    - key: jwt.pub
+                      path: jwt.pub
