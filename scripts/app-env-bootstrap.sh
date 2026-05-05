@@ -4,9 +4,9 @@ set -euo pipefail
 
 NS="${1:?usage: bootstrap-namespace.sh <namespace>}"
 
-# CR_PAT is only needed for namespaces that pull from ghcr.io. The "dev"
+# CR_PAT is only needed for namespaces that pull from ghcr.io. The "food-delivery-dev"
 # namespace runs against locally-built images on Minikube, so skip it there.
-if [ "$NS" != "dev" ]; then
+if [ "$NS" != "food-delivery-dev" ]; then
   : "${CR_PAT:?CR_PAT not set}"
 fi
 
@@ -18,7 +18,7 @@ PUBKEY_MANIFEST="$REPO_ROOT/k8s/base/jwt-pubkey.yaml"
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 
 # Create/refresh the pull secret (skipped in dev — images are local).
-if [ "$NS" != "dev" ]; then
+if [ "$NS" != "food-delivery-dev" ]; then
   kubectl create secret docker-registry ghcr-credentials \
     --docker-server=ghcr.io \
     --docker-username=thepaintester \
@@ -38,11 +38,11 @@ if [ ! -f "$PRIVKEY_MANIFEST" ] || [ ! -f "$PUBKEY_MANIFEST" ]; then
 
   kubectl create secret generic jwt-privkey \
     --from-file=jwt.key="$TMP/jwt.key" \
-    --dry-run=client -o yaml > "$PRIVKEY_MANIFEST"
+    --dry-run=client -o yaml >"$PRIVKEY_MANIFEST"
 
   kubectl create configmap jwt-pubkey \
     --from-file=jwt.pub="$TMP/jwt.pub" \
-    --dry-run=client -o yaml > "$PUBKEY_MANIFEST"
+    --dry-run=client -o yaml >"$PUBKEY_MANIFEST"
 
   echo "Wrote $PRIVKEY_MANIFEST"
   echo "Wrote $PUBKEY_MANIFEST"

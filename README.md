@@ -343,17 +343,28 @@ eval $(minikube docker-env)
 
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
   --env-file compose/.env.dev build
-
-# Re-tag with the tag the dev overlay expects:
-for svc in user-service restaurant-service order-service payment-service frontend; do
-  docker tag food-delivery/${svc}:latest food-delivery/${svc}:dev
-done
 ```
 
 Same-tag rebuilds need a manual `kubectl rollout restart deploy/<service>`
 because `IfNotPresent` won't refetch.
 
-### 2. Bootstrap the application namespace
+### 2. Publish images to ghcr
+
+`scripts/publish.sh` publish a service to your github container registry.
+You need to be logged in to github with docker to be able to push images.
+
+```bash
+./scripts/publish.sh <service> <version>
+```
+
+### 3. Edit Kustomize overlays to match your ghcr
+
+Edit the image `newName` and `newTag` to match the your registry name
+and the tag you set for your published services.
+
+You need to edit `./k8s/overlays/prod/kustomization.yaml` and `./k8s/overlays/staging/kustomization.yaml`
+
+### 4. Bootstrap the application namespace
 
 `scripts/app-env-bootstrap.sh` creates the namespace, generates the JWT
 keypair as a `Secret` (`jwt-privkey`) + `ConfigMap` (`jwt-pubkey`), and (for
@@ -361,12 +372,12 @@ staging/prod only) creates the `ghcr-credentials` image-pull Secret from
 `$CR_PAT`:
 
 ```bash
-./scripts/app-env-bootstrap.sh dev               # CR_PAT not required
-CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh staging
-CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh prod
+./scripts/app-env-bootstrap.sh food-delivery-dev               # CR_PAT not required
+CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh food-delivery-staging
+CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh food-delivery-prod
 ```
 
-### 3. Apply the overlay
+### 5. Apply the overlay
 
 ```bash
 kubectl apply -k k8s/overlays/dev
@@ -378,7 +389,7 @@ Each Deployment runs `golang-migrate` as an `initContainer` against its own
 Postgres before the app starts; migrations are baked into the service image.
 Re-applying is safe.
 
-### 4. Deploy the observability stack
+### 6. Deploy the observability stack
 
 One install, watching all three app namespaces:
 
@@ -403,7 +414,7 @@ kubectl apply -f k8s/observability/prometheus/dashboards/
 
 `scripts/observability-teardown.sh` is the symmetric uninstall.
 
-### 5. /etc/hosts
+### 7. /etc/hosts
 
 ```
 $(minikube ip)  dev.food-delivery.local
@@ -414,7 +425,7 @@ $(minikube ip)  kibana.observability.local
 $(minikube ip)  prometheus.observability.local
 ```
 
-### 6. Verify
+### 8. Verify
 
 ```bash
 kubectl -n food-delivery-dev get pods
