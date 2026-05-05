@@ -43,7 +43,6 @@ flowchart LR
 
   os <-->|publish/consume| rabbit["RabbitMQ<br/>(food_delivery topic exchange)"]
   ps <-->|publish/consume| rabbit
-  rs <-.->|HTTP read| os
 
   subgraph obs ["observability namespace"]
     prom["Prometheus"]
