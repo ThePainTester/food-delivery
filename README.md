@@ -1,23 +1,265 @@
-# food-delivery
+# Food Delivery Platform
 
-Polyglot microservices food-delivery platform: User (Go), Restaurant (Python),
-Order (Node/TS), Payment (Go mock), a static SPA frontend, and a stock Traefik
-gateway that fronts everything.
+A polyglot microservices food-delivery system built around four backend services
+(User, Restaurant, Order, Payment), a static SPA frontend, RabbitMQ as the
+event bus, per-service datastores, and a full three-pillar observability
+stack. The same code targets local Docker Compose for everyday iteration and
+Minikube + Kustomize for the Kubernetes story. The platform serves three user
+roles end-to-end: **customers** (browse restaurants, place and pay for
+orders), **restaurant owners** (publish menus, accept/prepare orders), and
+**delivery riders** (claim ready orders, push live location, mark
+delivered).
 
-## Running
+## Architecture
 
-One-time setup (per env):
+The system is a small set of single-responsibility services that talk to
+each other in two ways. Synchronous HTTP for read-after-write paths
+(authenticate, fetch a restaurant menu, fetch an order) and asynchronous
+events on RabbitMQ for everything that drives the order lifecycle
+(`order.placed`, `payment.completed`, `order.ready`, `order.delivered`,
+…). Each service owns its database — there is no shared schema and no
+cross-service joins. The frontend is a static SPA served by an in-pod
+NGINX; a separate ingress NGINX sits in front of everything as the
+single public entry point. JWTs (RS256) are minted by User Service and
+verified independently by every other service using a public-key
+ConfigMap.
 
-```bash
-cp compose/.env.example compose/.env.dev      # then edit COMPOSE_PROJECT_NAME=food-delivery-dev
-cp compose/.env.example compose/.env.staging  # COMPOSE_PROJECT_NAME=food-delivery-staging
-cp compose/.env.example compose/.env.prod     # COMPOSE_PROJECT_NAME=food-delivery-prod
-compose/scripts/gen-keys.sh                   # writes compose/jwt/{jwt.key,jwt.pub}
+### Component diagram
+
+```mermaid
+flowchart LR
+  user["User<br/>(browser)"] -->|HTTP| ingress["Ingress NGINX<br/>(controller)"]
+  ingress --> fe["Frontend<br/>(NGINX + SPA)"]
+  ingress --> us["User Service<br/>(Go)"]
+  ingress --> rs["Restaurant Service<br/>(Python)"]
+  ingress --> os["Order Service<br/>(Node/TS)"]
+  ingress --> ps["Payment Service<br/>(Go)"]
+
+  us --> usdb[("users-db<br/>Postgres")]
+  rs --> rsdb[("restaurants-db<br/>MongoDB")]
+  os --> osdb[("orders-db<br/>Postgres")]
+  os --> cache[("orders-cache<br/>Redis")]
+  ps --> psdb[("payments-db<br/>Postgres")]
+
+  os <-->|publish/consume| rabbit["RabbitMQ<br/>(food_delivery topic exchange)"]
+  ps <-->|publish/consume| rabbit
+  rs <-.->|HTTP read| os
+
+  subgraph obs ["observability namespace"]
+    prom["Prometheus"]
+    graf["Grafana"]
+    es["Elasticsearch"]
+    kib["Kibana"]
+    tempo["Tempo"]
+    otel["OTel Collector"]
+  end
+
+  us & rs & os & ps & fe -. metrics .-> prom
+  us & rs & os & ps & fe -. stdout logs .-> es
+  us & rs & os & ps -. OTLP traces .-> otel --> tempo
+  prom --> graf
+  tempo --> graf
+  es --> kib
 ```
 
-Bring up a single env (dev shown):
+### Order placement (happy path)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Customer (SPA)
+  participant US as User Service
+  participant RS as Restaurant Service
+  participant OS as Order Service
+  participant PS as Payment Service
+  participant MQ as RabbitMQ
+
+  C->>US: POST /auth/login
+  US-->>C: JWT (RS256)
+  C->>RS: GET /restaurants, /restaurants/{id}/menu
+  RS-->>C: menu items + prices
+  C->>OS: POST /orders {items, delivery address}
+  OS->>RS: GET /restaurants/{id}/menu (validate + snapshot prices)
+  OS-->>C: 201 order PENDING
+  OS->>MQ: publish order.placed
+  C->>PS: POST /payments {order_id, amount, card}
+  PS-->>C: 201 payment COMPLETED
+  PS->>MQ: publish payment.completed
+  MQ-->>OS: payment.completed
+  OS->>OS: mark order paid
+```
+
+### Real-time delivery tracking
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant R as Rider (SPA)
+  participant OS as Order Service
+  participant Redis as orders-cache (Redis)
+  participant MQ as RabbitMQ
+  participant C as Customer (SPA)
+
+  Note over OS,MQ: Order is READY (restaurant ready, no rider yet)
+  R->>OS: POST /orders/{id}/assign (self-claim)
+  OS->>MQ: publish delivery.assigned
+  loop every few seconds while in transit
+    R->>OS: POST /orders/{id}/location {lat, lng}
+    OS->>Redis: SETEX order:{id}:loc TTL=120s
+  end
+  C->>OS: GET /orders/{id}/location
+  OS->>Redis: GET order:{id}:loc
+  OS-->>C: {lat, lng, updated_at}
+  R->>OS: PATCH /orders/{id}/status PICKED_UP → DELIVERED
+  OS->>MQ: publish order.picked_up, order.delivered
+```
+
+### Observability data flow
+
+```mermaid
+flowchart LR
+  subgraph apps["food-delivery-{dev,staging,prod}"]
+    a1["User Service"]
+    a2["Restaurant Service"]
+    a3["Order Service"]
+    a4["Payment Service"]
+    a5["Frontend NGINX"]
+  end
+
+  a1 & a2 & a3 & a4 & a5 -- "/metrics + ServiceMonitors" --> prom["Prometheus<br/>(kube-prometheus-stack)"]
+  a1 & a2 & a3 & a4 & a5 -- "stdout JSON" --> fb["Filebeat DaemonSet"]
+  a1 & a2 & a3 & a4 -- "OTLP gRPC" --> otel["OTel Collector"]
+
+  fb --> ls["Logstash"] --> es[("Elasticsearch")]
+  otel --> tempo[("Tempo")]
+  prom --> graf["Grafana"]
+  tempo --> graf
+  es --> kib["Kibana"]
+```
+
+## Components
+
+**User Service** — Go (Gin) on Postgres. Owns accounts, profiles, and
+authentication. Hashes passwords with bcrypt; mints RS256 JWTs and exposes
+the matching public key at `/.well-known/jwks.pem`. No events.
+
+**Restaurant Service** — Python 3.12 (FastAPI) on MongoDB. Owns
+restaurants and their menus (one-to-many embedded model). Verifies JWTs
+locally with the shared public key. No events; called synchronously by
+Order Service when a customer places an order.
+
+**Order Service** — Node 20 / TypeScript (Express) on Postgres + Redis.
+Owns the order lifecycle state machine
+(`PENDING → ACCEPTED → PREPARING → READY → PICKED_UP → DELIVERED`,
+plus `REJECTED` / `CANCELLED`) and live delivery-rider geolocation
+(short-TTL keys in Redis). Publishes `order.placed`, `order.accepted`,
+`order.rejected`, `order.ready`, `order.picked_up`, `order.delivered`,
+`order.cancelled`, `delivery.assigned`. Consumes `payment.completed`,
+`payment.failed`.
+
+**Payment Service** — Go (Gin) on Postgres. Mock card processor: any
+card number ending in `0000` is declined, everything else clears. Cash
+on delivery is supported as a separate flow that stays `PENDING` until
+the rider calls `/payments/by-order/{id}/collect`. Publishes
+`payment.pending`, `payment.completed`, `payment.failed`. Consumes
+`order.cancelled` (refund hook — currently a no-op log line).
+
+**Frontend** — Single static SPA (`public/app.js` + `index.html`)
+served by NGINX. One UI for all three roles, picked at registration
+time. No build step. Includes a Leaflet map for delivery pickers and
+live tracking; default center is Cairo.
+
+**Infrastructure** — RabbitMQ as the only shared piece (topic exchange
+`food_delivery`). Each backend service has its own database
+(`users-db`, `restaurants-db`, `orders-db`, `payments-db`). Redis
+(`orders-cache`) only stores ephemeral rider locations, never
+authoritative state.
+
+**Observability** — kube-prometheus-stack (Prometheus + Alertmanager +
+Grafana) for metrics, ECK ELK (Elasticsearch + Logstash + Kibana +
+Filebeat) for logs, Tempo + OTel Collector for traces. All three
+pillars deploy once into a shared `observability` namespace and watch
+all three application namespaces simultaneously.
+
+**Ingress** — Minikube's NGINX Ingress controller is the single public
+entry point on Kubernetes; one Ingress per env routes
+`<env>.food-delivery.local` and a separate observability Ingress
+routes `*.observability.local`. Note that there are two NGINXes in
+play: this **ingress controller** at the cluster edge, and the
+**frontend pod's NGINX** that just serves static SPA files. Compose
+uses Traefik as the gateway instead.
+
+## Project Structure
+
+```
+food-delivery/
+├── services/                    # all microservices, one directory each
+│   ├── user-service/            # Go + Gin + Postgres
+│   ├── restaurant-service/      # Python + FastAPI + MongoDB
+│   ├── order-service/           # Node/TS + Express + Postgres + Redis
+│   ├── payment-service/         # Go + Gin + Postgres
+│   └── frontend/                # NGINX serving a static SPA
+├── compose/                     # Docker Compose stack
+│   ├── docker-compose.yml       # base topology
+│   ├── docker-compose.dev.yml   # build images, expose all ports
+│   ├── docker-compose.staging.yml  # pull staging images
+│   ├── docker-compose.prod.yml  # pull pinned images, no debug ports
+│   ├── .env.example             # copy to .env.dev / .env.staging / .env.prod
+│   └── scripts/gen-keys.sh      # generates the JWT keypair for Compose
+├── k8s/                         # Kubernetes (Kustomize) deployment
+│   ├── base/                    # apps + per-service infra + base ingress
+│   ├── overlays/{dev,staging,prod}/   # per-env namespace, image tag, replicas
+│   └── observability/           # Prometheus / ELK / Tempo manifests + Helm values
+├── scripts/                     # operator scripts
+│   ├── app-env-bootstrap.sh     # creates a namespace, JWT keypair, pull secret
+│   ├── observability-bootstrap.sh   # idempotent install of the observability stack
+│   ├── observability-teardown.sh    # symmetric uninstall
+│   ├── build.sh                 # docker build a single service
+│   └── publish.sh               # docker push to a registry
+└── specs/                       # design notes (not required reading)
+```
+
+## Prerequisites
+
+- **Docker Engine** 24+ with **Docker Compose v2** (`docker compose`, not `docker-compose`)
+- **Minikube** 1.32+ with the `ingress` and `metrics-server` addons enabled
+- **kubectl** matching your cluster's minor version
+- **Helm** 3.12+
+- **OpenSSL** (for JWT keypair generation)
+- A Bash-compatible shell (the scripts use `bash`)
+- `/etc/hosts` write access to map the ingress hostnames:
+
+```
+$(minikube ip)  dev.food-delivery.local
+$(minikube ip)  staging.food-delivery.local
+$(minikube ip)  food-delivery.local
+$(minikube ip)  grafana.observability.local
+$(minikube ip)  kibana.observability.local
+$(minikube ip)  prometheus.observability.local
+```
+
+No language toolchains are required on the host — every service builds inside
+Docker.
+
+## Development Environment Setup
+
+The fast iteration loop is Docker Compose. From clone to a working SPA in the
+browser:
 
 ```bash
+# 1. Clone
+git clone <this-repo> food-delivery && cd food-delivery
+
+# 2. Per-env env files (one-time)
+cp compose/.env.example compose/.env.dev
+cp compose/.env.example compose/.env.staging
+cp compose/.env.example compose/.env.prod
+# edit each so COMPOSE_PROJECT_NAME differs (food-delivery-dev, …)
+
+# 3. JWT keypair for Compose (one-time)
+compose/scripts/gen-keys.sh        # writes compose/jwt/{jwt.key,jwt.pub}
+
+# 4. Bring up the dev stack (builds every image first run)
 docker compose \
   -f compose/docker-compose.yml \
   -f compose/docker-compose.dev.yml \
@@ -25,151 +267,107 @@ docker compose \
   up --build
 ```
 
-Swap the overlay file and the env file for staging/prod. Staging and prod
-expect images already pushed to `${REGISTRY}` at the right tag — they don't
-build.
+URLs once the stack is healthy:
 
-## Running all three envs side-by-side
+| What | URL |
+|---|---|
+| Frontend (SPA) | <http://localhost:3000> |
+| Traefik dashboard | <http://localhost:8090> |
+| RabbitMQ UI | <http://localhost:15672> (`guest` / `guest`) |
+| Direct service ports (dev only) | `:8081` user, `:8082` restaurant, `:8083` order, `:8084` payment |
 
-Each env's `COMPOSE_PROJECT_NAME` (set in its `.env.<env>` file) prefixes its
-own networks, volumes, and containers, so the three stacks stay isolated.
-Published ports also don't collide: dev exposes the gateway on `3000` plus
-direct-debug ports on the data stores and service containers; staging exposes
-only the gateway on `8080`; prod exposes only `80`/`443`.
+## Compose Deployment (multi-environment)
 
-Bring all three up in three terminals (or detached):
+All three environments are isolated by `COMPOSE_PROJECT_NAME` (set in their
+`.env.<env>` file) — networks, volumes, and container names get auto-prefixed,
+so the three stacks can run simultaneously on one host.
+
+### Development
+
+Builds images locally from `services/*`, exposes every port for debugging,
+`restart: "no"`.
 
 ```bash
-# dev
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
   --env-file compose/.env.dev up -d --build
+```
 
-# staging
+### Staging
+
+Pulls images at the `:staging` tag from `${REGISTRY}` (set in `.env.staging`).
+Exposes the gateway on `:8080` plus the RabbitMQ UI; data stores stay
+internal. `restart: unless-stopped`.
+
+```bash
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.staging.yml \
   --env-file compose/.env.staging up -d
+```
 
-# prod
+### Production
+
+Pulls pinned `:${IMAGE_TAG}` images. Publishes only `:80` and `:443` on the
+gateway; nothing else is reachable from the host. Adds resource limits and
+log rotation. `restart: always`.
+
+```bash
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml \
   --env-file compose/.env.prod up -d
 ```
 
-Inspect one stack at a time by passing the same `--env-file` (or `-p
-<project-name>` together with `COMPOSE_PROJECT_NAME=<project-name>` in the
-shell):
+### Inspect / tear down a single env
 
 ```bash
-docker compose --env-file compose/.env.staging ps
-docker compose --env-file compose/.env.staging logs -f gateway
+docker compose --env-file compose/.env.<env> ps
+docker compose --env-file compose/.env.<env> logs -f gateway
+docker compose -f compose/docker-compose.yml -f compose/docker-compose.<env>.yml \
+  --env-file compose/.env.<env> down -v
 ```
 
-Tear down a single env without touching the others:
+> Use `--env-file` (not `-p`) for stack selection. `-p` sets the project
+> name for prefixing but does not populate `${COMPOSE_PROJECT_NAME}` for
+> variable substitution, which Traefik labels rely on.
 
-```bash
-docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
-  --env-file compose/.env.dev down -v
-```
+## Kubernetes Deployment
 
-> Use `--env-file` not `-p` for stack selection. `-p` sets the project name
-> for prefixing but does **not** populate `${COMPOSE_PROJECT_NAME}` for
-> variable substitution in the compose file, which Traefik relies on. The env
-> file feeds both paths from one source.
+The Kustomize tree under `k8s/` mirrors the Compose stack with three overlays
+(`dev` / `staging` / `prod`) that each live in their own namespace, on their
+own ingress host, so they coexist on one Minikube.
 
-## Accessing the SPA
+### 1. Build images into Minikube's Docker daemon
 
-| Env | URL | Notes |
-|---|---|---|
-| Dev     | <http://localhost:3000>     | Traefik dashboard: <http://localhost:8090> |
-| Staging | <http://\<host\>:8080>      | gateway only |
-| Prod    | <http://\<host\>> / <https://\<host\>> | 80 + 443 published |
-
-In every environment the browser talks only to the **gateway** container
-(stock Traefik); the gateway forwards `/api/*` to the backend services and
-`/` to the static frontend container, all over the internal compose
-network. Routing rules live as `traefik.*` labels on each service in
-`compose/docker-compose.yml`. Backend service ports are also published in
-dev (8081–8084) for direct testing, but the browser doesn't use them.
-
-See [`compose/README.md`](compose/README.md) for the full port map and
-[`services/frontend/README.md`](services/frontend/README.md) for SPA
-routes.
-
-## Kubernetes (Minikube)
-
-The Compose stack is the local-first iteration loop. The Kustomize tree
-under `k8s/` deploys the same images to a Kubernetes cluster, with three
-overlays (`dev` / `test` / `prod`) that each live in their own namespace and
-their own ingress host so all three can run side-by-side on one Minikube.
-
-### Prerequisites
-
-```bash
-minikube start
-minikube addons enable ingress       # NGINX Ingress controller
-```
-
-### Build images into Minikube's Docker daemon
-
-The dev/staging overlays use `imagePullPolicy: IfNotPresent` and reference
-local image tags (`:dev`, `:staging`). Build them inside Minikube's daemon so
-the cluster can find them without a registry:
+The `dev` overlay uses `imagePullPolicy: IfNotPresent` and references local
+image tags (`:dev`). Build them inside Minikube's daemon so the cluster can
+find them with no registry round-trip:
 
 ```bash
 eval $(minikube docker-env)
 
-# Same Compose build, tagged for k8s/dev:
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
   --env-file compose/.env.dev build
 
-# Re-tag with the dev/staging tags the overlays expect:
+# Re-tag with the tag the dev overlay expects:
 for svc in user-service restaurant-service order-service payment-service frontend; do
   docker tag food-delivery/${svc}:latest food-delivery/${svc}:dev
-  docker tag food-delivery/${svc}:latest food-delivery/${svc}:staging
 done
 ```
 
-(For prod, push to a real registry and pin the image with
-`kustomize edit set image food-delivery/user-service=registry.example.com/user-service:v1.4.2`
-inside `k8s/overlays/prod/` before applying.)
+Same-tag rebuilds need a manual `kubectl rollout restart deploy/<service>`
+because `IfNotPresent` won't refetch.
 
-### Replace the JWT keypair stub
+### 2. Bootstrap the application namespace
 
-`k8s/base/secrets/jwt-keypair.yaml` ships with placeholder strings so
-`kubectl kustomize` doesn't error out before you've configured anything.
-Generate real RS256 keys and inline them, or apply a separately-managed
-Secret of the same name:
-
-```bash
-openssl genpkey -algorithm RSA -out /tmp/jwt.key -pkeyopt rsa_keygen_bits:2048
-openssl rsa -in /tmp/jwt.key -pubout -out /tmp/jwt.pub
-# then paste the file contents into k8s/base/secrets/jwt-keypair.yaml
-```
-
-### Private registry credentials (staging / prod)
-
-The `staging` and `prod` overlays patch every Deployment with
-`imagePullSecrets: [{name: ghcr-credentials}]` so kubelet can pull from your
-private registry. The Secret itself is *not* in git — create it once per
-namespace before the first apply:
+`scripts/app-env-bootstrap.sh` creates the namespace, generates the JWT
+keypair as a `Secret` (`jwt-privkey`) + `ConfigMap` (`jwt-pubkey`), and (for
+staging/prod only) creates the `ghcr-credentials` image-pull Secret from
+`$CR_PAT`:
 
 ```bash
-# GitHub Container Registry example — username is your GitHub login,
-# password is a Personal Access Token with `read:packages` scope.
-for ns in food-delivery-staging food-delivery-prod; do
-  kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
-  kubectl create secret docker-registry ghcr-credentials \
-    --docker-server=ghcr.io \
-    --docker-username=YOUR_GITHUB_USERNAME \
-    --docker-password=YOUR_GITHUB_PAT \
-    --namespace="$ns"
-done
+./scripts/app-env-bootstrap.sh dev               # CR_PAT not required
+CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh staging
+CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh prod
 ```
 
-For other registries, change `--docker-server` accordingly
-(`docker.io` for Docker Hub, `<account>.dkr.ecr.<region>.amazonaws.com` for
-ECR, etc.). The `dev` overlay doesn't need this — it builds into Minikube's
-local Docker daemon and pulls nothing.
-
-### Deploy an overlay
+### 3. Apply the overlay
 
 ```bash
 kubectl apply -k k8s/overlays/dev
@@ -177,138 +375,126 @@ kubectl apply -k k8s/overlays/staging
 kubectl apply -k k8s/overlays/prod
 ```
 
-(`kustomize build … | kubectl apply -f -` works the same way.)
+Each Deployment runs `golang-migrate` as an `initContainer` against its own
+Postgres before the app starts; migrations are baked into the service image.
+Re-applying is safe.
 
-Schema migrations run automatically: each app Deployment has an
-`initContainers:` block that runs [`golang-migrate`](https://github.com/golang-migrate/migrate)
-against the right Postgres before the app container starts. The `migrate`
-binary and the `migrations/*.up.sql` files are baked into each service
-image at build time, so no Kustomize ConfigMap or cross-directory file
-access is needed. Re-applying is safe — `migrate` tracks applied versions
-in a `schema_migrations` table on the target DB.
+### 4. Deploy the observability stack
 
-### `/etc/hosts` entries
-
-Each overlay serves on its own host, mapped to the Minikube IP
-(`minikube ip`):
-
-```
-$(minikube ip)  dev.food-delivery.local
-$(minikube ip)  staging.food-delivery.local
-$(minikube ip)  food-delivery.local
-```
-
-Then browse to <http://dev.food-delivery.local>, <http://staging.food-delivery.local>,
-or <http://food-delivery.local>.
-
-### Inspect a single env
+One install, watching all three app namespaces:
 
 ```bash
-kubectl get all -n food-delivery-dev
-kubectl logs -n food-delivery-dev deploy/order-service -f
-kubectl exec -n food-delivery-dev -it statefulset/orders-db -- psql -U orders -d orders
+./scripts/observability-bootstrap.sh
 ```
 
-### Tear down a single env
+The script is idempotent and runs the Helm installs + ECK CRDs in dependency
+order:
 
-```bash
-kubectl delete -k k8s/overlays/dev
-# Or namespace-delete (slower but tidier):
-kubectl delete namespace food-delivery-dev
 ```
-
-> Deleting the namespace also removes the PVCs, so all persistent state
-> (restaurant docs, orders, payments, RabbitMQ queue files) is wiped.
-
-## Observability
-
-Three-pillar observability — metrics, logs, traces — deployed once into
-a single shared `observability` namespace, watching all three env
-namespaces (`food-delivery-{dev,staging,prod}`) at the same time. Full
-manifests live under [`k8s/observability/`](k8s/observability) with its
-own [README](k8s/observability/README.md).
-
-| Pillar  | Stack                                                              | UI                                  |
-|---------|--------------------------------------------------------------------|-------------------------------------|
-| Metrics | kube-prometheus-stack (Prometheus + Alertmanager + Grafana)        | <http://grafana.observability.local>      |
-| Logs    | ECK ELK (Elasticsearch + Logstash + Kibana + Filebeat DaemonSet)   | <http://kibana.observability.local>       |
-| Traces  | grafana/tempo + open-telemetry/opentelemetry-collector             | (in Grafana, datasource `Tempo`)    |
-
-Prometheus is also browsable at <http://prometheus.observability.local>.
-
-### One-time install
-
-```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add elastic               https://helm.elastic.co
-helm repo add grafana               https://grafana.github.io/helm-charts
-helm repo add open-telemetry        https://open-telemetry.github.io/opentelemetry-helm-charts
-helm repo update
-
-kubectl create namespace observability
-
-# 1. ECK operator (cluster-wide)
-helm upgrade --install eck-operator elastic/eck-operator \
-  --namespace elastic-system --create-namespace \
-  -f k8s/observability/elastic/eck-operator.values.yaml
-
-# 2. kube-prometheus-stack
-helm upgrade --install kps prometheus-community/kube-prometheus-stack \
-  --namespace observability \
-  -f k8s/observability/prometheus/kube-prometheus-stack.values.yaml
-
-# 3. Tempo
-helm upgrade --install tempo grafana/tempo \
-  --namespace observability \
-  -f k8s/observability/tracing/tempo.values.yaml
-
-# 4. OTel Collector (deployment mode — apps push OTLP gRPC to its Service)
-helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
-  --namespace observability \
-  -f k8s/observability/tracing/otel-collector.values.yaml
-
-# 5. Elastic CRDs
-kubectl apply -n observability -f k8s/observability/elastic/elasticsearch.yaml
-kubectl apply -n observability -f k8s/observability/elastic/kibana.yaml
-kubectl apply -n observability -f k8s/observability/elastic/logstash.yaml
-kubectl apply              -f k8s/observability/elastic/filebeat.yaml
-kubectl apply -f k8s/observability/elastic/ilm-bootstrap.yaml   # 7-day ILM policy + index template
-
-# 6. Cluster-wide pieces (Tempo datasource, ingress, ServiceMonitors, dashboards)
+helm install eck-operator     elastic/eck-operator                 -f k8s/observability/elastic/eck-operator.values.yaml
+helm install kps              prometheus-community/kube-prometheus-stack -f k8s/observability/prometheus/kube-prometheus-stack.values.yaml
+helm install tempo            grafana/tempo                        -f k8s/observability/tracing/tempo.values.yaml
+helm install otel-collector   open-telemetry/opentelemetry-collector -f k8s/observability/tracing/otel-collector.values.yaml
+kubectl apply -f k8s/observability/elastic/{elasticsearch,kibana,logstash,filebeat,ilm-bootstrap}.yaml
 kubectl apply -f k8s/observability/tracing/grafana-datasource-tempo.yaml
 kubectl apply -f k8s/observability/ingress/observability-ingress.yaml
 kubectl apply -f k8s/observability/prometheus/service-monitors/
 kubectl apply -f k8s/observability/prometheus/dashboards/
 ```
 
-### `/etc/hosts` entries
+`scripts/observability-teardown.sh` is the symmetric uninstall.
+
+### 5. /etc/hosts
 
 ```
+$(minikube ip)  dev.food-delivery.local
+$(minikube ip)  staging.food-delivery.local
+$(minikube ip)  food-delivery.local
 $(minikube ip)  grafana.observability.local
 $(minikube ip)  kibana.observability.local
 $(minikube ip)  prometheus.observability.local
 ```
 
-### Default credentials
+### 6. Verify
 
-Grafana ships with `admin / admin` (configured via Helm values; rotate
-or pull from a sealed Secret in real environments). Elasticsearch
-security is **disabled** in this Minikube deployment so Logstash,
-Kibana, and Filebeat can connect over plain HTTP — fine for local
-development, never for prod-grade use.
+```bash
+kubectl -n food-delivery-dev get pods
+kubectl -n food-delivery-dev rollout status deploy/order-service
+curl -sSf http://dev.food-delivery.local/healthz
+```
 
-### Dashboards
+Open the SPA at <http://dev.food-delivery.local>.
 
-Pre-provisioned via ConfigMaps with the `grafana_dashboard: "1"` label;
-Grafana's sidecar discovers them automatically and groups them under a
-"Food Delivery" folder.
+### Tear down
 
-| Dashboard | What it shows |
-|---|---|
-| Service RED            | Per-service request rate, 5xx rate, p95 / p50 latency. `env` + `service` template variables. |
-| Order Pipeline         | Orders placed, payment success rate, RabbitMQ queue depth + unacked, p95 latency by service, errors per service. |
-| Ingress (NGINX Controller) | Per-host request rate, status-class breakdown, p95 upstream latency, 5xx by host. |
-| Frontend NGINX         | Active connections, connection states, requests/sec, accepted vs handled. |
+```bash
+kubectl delete -k k8s/overlays/dev
+# or
+kubectl delete namespace food-delivery-dev    # also drops PVCs
+```
 
-Plus the kube-prometheus-stack defaults (cluster, nodes, pods,
-kube-state-metrics, node-exporter — all bundled with the chart).
+## Observability Access
+
+| Stack | URL | Default creds | What to look at |
+|---|---|---|---|
+| Grafana | <http://grafana.observability.local> | `admin / admin` | Dashboards → "Food Delivery" folder: Service RED, Order Pipeline, Ingress (NGINX), Frontend NGINX |
+| Kibana | <http://kibana.observability.local> | `elastic` (password in `elasticsearch-es-elastic-user` Secret) | Discover → index pattern `food-delivery-*` |
+| Prometheus | <http://prometheus.observability.local> | none | Try `sum by (service) (rate(http_requests_total[5m]))` |
+| Tempo | inside Grafana → Explore → datasource `Tempo` | n/a | Search by `trace_id`, or use the "Logs ↔ Traces" link in the Service RED dashboard |
+
+Sample Kibana queries:
+
+- `service.keyword: "order-service" and level.keyword: "error"` — recent error logs from order-service
+- `trace_id: "<id>"` — every log line tagged with a given trace, across services
+
+To find a trace from a log: copy the log entry's `trace_id` field, paste into
+Grafana Explore → Tempo. To go the other way: open a span in Tempo, click
+"Logs for this span", which queries Loki/ES with the same `trace_id`.
+
+## Repository Conventions
+
+**Image tagging**
+
+| Env | Tag | Source |
+|---|---|---|
+| Compose dev / k8s dev | `:dev` | local Compose build → minikube daemon |
+| Compose staging / k8s staging | `:staging` | registry pull |
+| Compose prod / k8s prod | pinned semver, e.g. `v1.0.0` | registry pull |
+
+The kustomize overlays rewrite the image name from the unprefixed
+`food-delivery/<service>` (used in base manifests) to the registry-qualified
+form for staging/prod.
+
+**Secrets**
+
+JWT keypair is per-cluster — `jwt-privkey` (Secret) and `jwt-pubkey`
+(ConfigMap) are generated by `scripts/app-env-bootstrap.sh` and gitignored.
+Templates live alongside as `*.example.yaml`. Database passwords and the
+RabbitMQ credentials are also stored as Secrets per service. Image-pull
+credentials for staging/prod come from `$CR_PAT` at bootstrap time and are
+never written to disk.
+
+## Troubleshooting
+
+**Minikube out of memory.** ECK + Prometheus together need ~4 GB. Start with
+`minikube start --memory=6g --cpus=4`.
+
+**Ingress hostnames don't resolve.** `/etc/hosts` not populated, or
+`$(minikube ip)` changed (it does, between minikube restarts). Re-run
+`echo "$(minikube ip) dev.food-delivery.local" | sudo tee -a /etc/hosts` and
+delete the stale line.
+
+**Stale PVC blocks schema init.** When you change SQL migrations in place
+(early dev), the old volume still has the old schema. `kubectl delete
+namespace food-delivery-dev` to drop the PVC, then re-apply.
+
+**RabbitMQ connection refused at boot.** Order/Payment services race against
+RabbitMQ on first start. Both have a `wait-for-rabbit` initContainer; if
+they still flap, `kubectl rollout restart` once Rabbit is up — the failure
+isn't sticky.
+
+**Grafana dashboards show "No data" or "Datasource not found".** Provisioned
+dashboards reference `datasource.uid="prometheus"`. If Helm reinstalls
+generate a fresh UID, the bundled JSON breaks. Fix: keep
+`prometheus.uid: prometheus` pinned in the kube-prometheus-stack values
+file (already set).
