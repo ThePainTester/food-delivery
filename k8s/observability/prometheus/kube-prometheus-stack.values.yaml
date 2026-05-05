@@ -36,7 +36,7 @@ grafana:
   adminPassword: admin            # local-only; rotate or sourceFromSecret in real envs
   # Shipped dashboards reference datasource.uid="prometheus" — don't
   # override or they'll render "No data".
-  defaultDashboardsTimezone: browser
+  defaultDashboardsTimezone: Africa/Cairo
   service:
     type: ClusterIP
   # Auto-discover dashboard / datasource ConfigMaps anywhere in the cluster.

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Principal, requireAuth, requireRole } from "../auth/jwt";
 import { OrderStatus } from "../domain/statuses";
 import { badRequest } from "../errors";
-import { centsToDecimal } from "../money";
+import { minorToDecimal } from "../money";
 import { OrderRow } from "../repositories/orders";
 import { Actor, OrdersService } from "../services/orders";
 
@@ -53,11 +53,11 @@ function toApi(r: OrderRow) {
       menu_item_id: i.menu_item_id,
       name: i.name,
       quantity: i.quantity,
-      unit_price: centsToDecimal(i.unit_price),
+      unit_price: minorToDecimal(i.unit_price),
     })),
-    subtotal: centsToDecimal(r.subtotal_cents),
-    delivery_fee: centsToDecimal(r.delivery_fee_cents),
-    total: centsToDecimal(r.total_cents),
+    subtotal: minorToDecimal(r.subtotal_minor),
+    delivery_fee: minorToDecimal(r.delivery_fee_minor),
+    total: minorToDecimal(r.total_minor),
     status: r.status,
     paid: r.paid,
     delivery_address: r.delivery_address,

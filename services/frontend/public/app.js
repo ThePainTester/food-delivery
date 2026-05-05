@@ -103,12 +103,12 @@ function flash(msg, kind = 'error') {
 function fmtMoney(s) {
   if (s == null) return '';
   const n = typeof s === 'string' ? parseFloat(s) : s;
-  return `$${n.toFixed(2)}`;
+  return `EGP ${n.toFixed(2)}`;
 }
 
 // ---------- map helpers -----------------------------------------------------
 
-const DEFAULT_CENTER = [37.7749, -122.4194]; // San Francisco
+const DEFAULT_CENTER = [30.0444, 31.2357]; // Cairo
 const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTR = '© OpenStreetMap';
 
@@ -714,7 +714,7 @@ async function viewRestaurantMenu() {
       <form id="add" class="grid sm:grid-cols-2 gap-2">
         <input name="name" placeholder="name" required class="border rounded px-2 py-1" />
         <input name="category" placeholder="category" required class="border rounded px-2 py-1" />
-        <input name="price" placeholder="price (e.g. 9.99)" required class="border rounded px-2 py-1" />
+        <input name="price" placeholder="price in EGP (e.g. 75.00)" required class="border rounded px-2 py-1" />
         <input name="image_url" placeholder="image url" class="border rounded px-2 py-1" />
         <textarea name="description" placeholder="description" class="border rounded px-2 py-1 sm:col-span-2"></textarea>
         <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="is_available" checked /> Available</label>

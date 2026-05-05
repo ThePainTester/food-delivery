@@ -6,9 +6,9 @@ CREATE TABLE IF NOT EXISTS orders (
     restaurant_id      UUID NOT NULL,
     delivery_user_id   UUID,
     items              JSONB NOT NULL,
-    subtotal_cents     BIGINT NOT NULL,
-    delivery_fee_cents BIGINT NOT NULL,
-    total_cents        BIGINT NOT NULL,
+    subtotal_minor     BIGINT NOT NULL,
+    delivery_fee_minor BIGINT NOT NULL,
+    total_minor        BIGINT NOT NULL,
     status             TEXT NOT NULL CHECK (status IN (
         'PENDING','ACCEPTED','REJECTED','PREPARING','READY',
         'PICKED_UP','DELIVERED','CANCELLED'

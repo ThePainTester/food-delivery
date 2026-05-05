@@ -184,7 +184,7 @@ services:
       JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
       JWT_ISSUER: ${JWT_ISSUER:-user-service}
       RESTAURANT_SERVICE_URL: http://restaurant-service:8080
-      DELIVERY_FEE_CENTS: ${DELIVERY_FEE_CENTS:-250}
+      DELIVERY_FEE_MINOR: ${DELIVERY_FEE_MINOR:-3000}
       LOCATION_TTL_SECONDS: ${LOCATION_TTL_SECONDS:-120}
     volumes:
       - *jwt-volume

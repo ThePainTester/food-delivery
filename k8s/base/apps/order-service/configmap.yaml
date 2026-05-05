@@ -8,6 +8,6 @@ data:
   RESTAURANT_SERVICE_URL: http://restaurant-service:8080
   JWT_ISSUER: user-service
   JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
-  DELIVERY_FEE_CENTS: "250"
+  DELIVERY_FEE_MINOR: "3000"
   LOCATION_TTL_SECONDS: "120"
   LOG_LEVEL: info

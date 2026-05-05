@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { RestaurantClient, RestaurantNotFoundError } from "../clients/restaurants";
 import { ActorKind, OrderStatus, Role, canTransition } from "../domain/statuses";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
-import { centsToDecimal, decimalToCents } from "../money";
+import { minorToDecimal, decimalToMinor } from "../money";
 import { Rabbit } from "../rabbit";
 import { OrderItemRow, OrderRow, OrdersRepo } from "../repositories/orders";
 
@@ -33,7 +33,7 @@ export class OrdersService {
     private repo: OrdersRepo,
     private rabbit: Rabbit,
     private restaurants: RestaurantClient,
-    private deliveryFeeCents: number,
+    private deliveryFeeMinor: number,
   ) {}
 
   /** Throws if the user is not the owner of the given restaurant. */
@@ -64,13 +64,13 @@ export class OrdersService {
     const menuById = new Map(menu.map((m) => [m.id, m]));
 
     const items: OrderItemRow[] = [];
-    let subtotalCents = 0;
+    let subtotalMinor = 0;
     for (const it of input.items) {
       const m = menuById.get(it.menuItemId);
       if (!m) throw badRequest(`menu item ${it.menuItemId} not found`);
       if (!m.is_available) throw badRequest(`menu item ${m.name} not available`);
-      const unit = decimalToCents(m.price);
-      subtotalCents += unit * it.quantity;
+      const unit = decimalToMinor(m.price);
+      subtotalMinor += unit * it.quantity;
       items.push({
         menu_item_id: m.id,
         name: m.name,
@@ -78,16 +78,16 @@ export class OrdersService {
         unit_price: String(unit),
       });
     }
-    const totalCents = subtotalCents + this.deliveryFeeCents;
+    const totalMinor = subtotalMinor + this.deliveryFeeMinor;
 
     const order = await this.repo.create({
       id: uuidv4(),
       customerId,
       restaurantId: input.restaurantId,
       items,
-      subtotalCents,
-      deliveryFeeCents: this.deliveryFeeCents,
-      totalCents,
+      subtotalMinor,
+      deliveryFeeMinor: this.deliveryFeeMinor,
+      totalMinor,
       deliveryAddress: input.deliveryAddress,
       deliveryLatitude: input.deliveryLatitude ?? null,
       deliveryLongitude: input.deliveryLongitude ?? null,
@@ -101,11 +101,11 @@ export class OrdersService {
         menu_item_id: i.menu_item_id,
         name: i.name,
         quantity: i.quantity,
-        unit_price: Number(centsToDecimal(i.unit_price)),
+        unit_price: Number(minorToDecimal(i.unit_price)),
       })),
-      subtotal: Number(centsToDecimal(order.subtotal_cents)),
-      delivery_fee: Number(centsToDecimal(order.delivery_fee_cents)),
-      total: Number(centsToDecimal(order.total_cents)),
+      subtotal: Number(minorToDecimal(order.subtotal_minor)),
+      delivery_fee: Number(minorToDecimal(order.delivery_fee_minor)),
+      total: Number(minorToDecimal(order.total_minor)),
       delivery_address: order.delivery_address,
     });
 

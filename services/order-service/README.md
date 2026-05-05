@@ -11,7 +11,7 @@ Verifies JWTs (RS256) using the shared public key issued by User Service.
 - `JWT_PUBLIC_KEY_PATH` — same public key used by User Service
 - `JWT_ISSUER` (default `user-service`)
 - `RESTAURANT_SERVICE_URL` — e.g. `http://restaurant-service:8080`
-- `DELIVERY_FEE_CENTS` (default 250)
+- `DELIVERY_FEE_MINOR` (default 3000)
 - `LOCATION_TTL_SECONDS` (default 120)
 
 ## Events
@@ -29,4 +29,4 @@ Verifies JWTs (RS256) using the shared public key issued by User Service.
 - `GET /healthz`
 
 ## Money
-Stored as integer cents (`BIGINT`) in Postgres; converted to/from decimal strings at API boundary.
+Stored as integer minor units (`BIGINT`) in Postgres; converted to/from decimal strings at API boundary.

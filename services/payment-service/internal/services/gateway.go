@@ -14,13 +14,13 @@ import (
 // REPLACE THIS in a real deployment with an actual SDK call, e.g.:
 //
 //   pi, err := stripe.PaymentIntents.New(&stripe.PaymentIntentParams{
-//       Amount: stripe.Int64(amountCents), Currency: stripe.String("usd"),
+//       Amount: stripe.Int64(amountMinor), Currency: stripe.String("usd"),
 //       PaymentMethod: stripe.String(paymentMethodID), Confirm: stripe.Bool(true),
 //   })
 //
 // The signature/return contract here is what the rest of the service relies
 // on, so swapping providers is a one-file change.
-func chargeViaGateway(ctx context.Context, cardNumber string, amountCents int64) (gatewayResult, error) {
+func chargeViaGateway(ctx context.Context, cardNumber string, amountMinor int64) (gatewayResult, error) {
 	const simulatedLatency = 1500 * time.Millisecond
 	select {
 	case <-ctx.Done():

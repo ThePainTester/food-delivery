@@ -28,7 +28,7 @@ type Actor struct {
 type CreateInput struct {
 	OrderID     string
 	CustomerID  *string // optional; populated from event-driven path
-	AmountCents int64
+	AmountMinor int64
 	Method      string
 	CardNumber  string // demo only — used by the simulated gateway
 }
@@ -78,7 +78,7 @@ func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*
 		p, err := s.repo.Create(ctx, &models.Payment{
 			OrderID:     in.OrderID,
 			CustomerID:  in.CustomerID,
-			AmountCents: in.AmountCents,
+			AmountMinor: in.AmountMinor,
 			Status:      models.StatusPending,
 			Method:      method,
 		})
@@ -88,7 +88,7 @@ func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*
 		if perr := s.rabbit.Publish(ctx, "payment.pending", map[string]any{
 			"payment_id": p.ID,
 			"order_id":   p.OrderID,
-			"amount":     money.ToFloat(p.AmountCents),
+			"amount":     money.ToFloat(p.AmountMinor),
 			"method":     p.Method,
 		}); perr != nil {
 			slog.Error("publish payment.pending failed", "payment_id", p.ID, "err", perr)
@@ -96,7 +96,7 @@ func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*
 		return p, nil
 	}
 
-	res, err := chargeViaGateway(ctx, in.CardNumber, in.AmountCents)
+	res, err := chargeViaGateway(ctx, in.CardNumber, in.AmountMinor)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*
 	p, err := s.repo.Create(ctx, &models.Payment{
 		OrderID:     in.OrderID,
 		CustomerID:  in.CustomerID,
-		AmountCents: in.AmountCents,
+		AmountMinor: in.AmountMinor,
 		Status:      status,
 		Method:      method,
 	})
@@ -137,7 +137,7 @@ func (s *PaymentsService) CreateForOrder(ctx context.Context, in CreateInput) (*
 	if perr := s.rabbit.Publish(ctx, "payment.completed", map[string]any{
 		"payment_id":   p.ID,
 		"order_id":     p.OrderID,
-		"amount":       money.ToFloat(p.AmountCents),
+		"amount":       money.ToFloat(p.AmountMinor),
 		"method":       p.Method,
 		"completed_at": time.Now().UTC().Format(time.RFC3339Nano),
 	}); perr != nil {
@@ -166,7 +166,7 @@ func (s *PaymentsService) CollectCash(ctx context.Context, orderID string) (*mod
 	if perr := s.rabbit.Publish(ctx, "payment.completed", map[string]any{
 		"payment_id":   p.ID,
 		"order_id":     p.OrderID,
-		"amount":       money.ToFloat(p.AmountCents),
+		"amount":       money.ToFloat(p.AmountMinor),
 		"method":       p.Method,
 		"completed_at": time.Now().UTC().Format(time.RFC3339Nano),
 	}); perr != nil {

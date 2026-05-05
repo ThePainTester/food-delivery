@@ -46,7 +46,7 @@ func toDTO(p *models.Payment) paymentDTO {
 	return paymentDTO{
 		ID:        p.ID,
 		OrderID:   p.OrderID,
-		Amount:    money.ToString(p.AmountCents),
+		Amount:    money.ToString(p.AmountMinor),
 		Status:    string(p.Status),
 		Method:    p.Method,
 		CreatedAt: p.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
@@ -70,7 +70,7 @@ func (h *handler) Create(c *gin.Context) {
 	p, err := h.svc.CreateForOrder(c, services.CreateInput{
 		OrderID:     req.OrderID,
 		CustomerID:  &customerID,
-		AmountCents: money.FromFloat(req.Amount),
+		AmountMinor: money.FromFloat(req.Amount),
 		Method:      req.Method,
 		CardNumber:  req.CardNumber,
 	})

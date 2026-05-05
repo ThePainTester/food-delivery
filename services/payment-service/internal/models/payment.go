@@ -14,7 +14,7 @@ type Payment struct {
 	ID          string
 	OrderID     string
 	CustomerID  *string
-	AmountCents int64
+	AmountMinor int64
 	Status      Status
 	Method      string
 	CreatedAt   time.Time

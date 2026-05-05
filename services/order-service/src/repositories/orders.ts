@@ -6,7 +6,7 @@ export interface OrderItemRow {
   menu_item_id: string;
   name: string;
   quantity: number;
-  unit_price: string; // cents-as-string
+  unit_price: string; // minor-units-as-string
 }
 
 export interface OrderRow {
@@ -15,9 +15,9 @@ export interface OrderRow {
   restaurant_id: string;
   delivery_user_id: string | null;
   items: OrderItemRow[];
-  subtotal_cents: string;
-  delivery_fee_cents: string;
-  total_cents: string;
+  subtotal_minor: string;
+  delivery_fee_minor: string;
+  total_minor: string;
   status: OrderStatus;
   paid: boolean;
   delivery_address: string;
@@ -34,7 +34,7 @@ export interface OrderOwners {
 }
 
 const RETURNING = `id, customer_id, restaurant_id, delivery_user_id, items,
-  subtotal_cents::text, delivery_fee_cents::text, total_cents::text,
+  subtotal_minor::text, delivery_fee_minor::text, total_minor::text,
   status, paid, delivery_address, delivery_latitude, delivery_longitude,
   created_at, updated_at`;
 
@@ -46,9 +46,9 @@ export class OrdersRepo {
     customerId: string;
     restaurantId: string;
     items: OrderItemRow[];
-    subtotalCents: number;
-    deliveryFeeCents: number;
-    totalCents: number;
+    subtotalMinor: number;
+    deliveryFeeMinor: number;
+    totalMinor: number;
     deliveryAddress: string;
     deliveryLatitude?: number | null;
     deliveryLongitude?: number | null;
@@ -56,7 +56,7 @@ export class OrdersRepo {
     const { rows } = await this.pool.query<OrderRow>(
       `INSERT INTO orders (
           id, customer_id, restaurant_id, items,
-          subtotal_cents, delivery_fee_cents, total_cents,
+          subtotal_minor, delivery_fee_minor, total_minor,
           status, delivery_address, delivery_latitude, delivery_longitude
        ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,'PENDING',$8,$9,$10)
        RETURNING ${RETURNING}`,
@@ -65,9 +65,9 @@ export class OrdersRepo {
         input.customerId,
         input.restaurantId,
         JSON.stringify(input.items),
-        input.subtotalCents,
-        input.deliveryFeeCents,
-        input.totalCents,
+        input.subtotalMinor,
+        input.deliveryFeeMinor,
+        input.totalMinor,
         input.deliveryAddress,
         input.deliveryLatitude ?? null,
         input.deliveryLongitude ?? null,

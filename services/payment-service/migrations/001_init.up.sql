@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS payments (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id     UUID NOT NULL UNIQUE,
     customer_id  UUID,
-    amount_cents BIGINT NOT NULL,
+    amount_minor BIGINT NOT NULL,
     status       TEXT NOT NULL CHECK (status IN ('PENDING','COMPLETED','FAILED')),
     method       TEXT NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()

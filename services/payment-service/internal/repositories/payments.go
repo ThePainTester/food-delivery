@@ -23,12 +23,12 @@ func New(pool *pgxpool.Pool) *PaymentsRepo { return &PaymentsRepo{Pool: pool} }
 
 func (r *PaymentsRepo) Create(ctx context.Context, p *models.Payment) (*models.Payment, error) {
 	row := r.Pool.QueryRow(ctx, `
-		INSERT INTO payments (order_id, customer_id, amount_cents, status, method)
+		INSERT INTO payments (order_id, customer_id, amount_minor, status, method)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, order_id, customer_id, amount_cents, status, method, created_at
-	`, p.OrderID, p.CustomerID, p.AmountCents, p.Status, p.Method)
+		RETURNING id, order_id, customer_id, amount_minor, status, method, created_at
+	`, p.OrderID, p.CustomerID, p.AmountMinor, p.Status, p.Method)
 	out := &models.Payment{}
-	if err := row.Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountCents, &out.Status, &out.Method, &out.CreatedAt); err != nil {
+	if err := row.Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountMinor, &out.Status, &out.Method, &out.CreatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, ErrAlreadyExists
@@ -41,9 +41,9 @@ func (r *PaymentsRepo) Create(ctx context.Context, p *models.Payment) (*models.P
 func (r *PaymentsRepo) GetByID(ctx context.Context, id string) (*models.Payment, error) {
 	out := &models.Payment{}
 	err := r.Pool.QueryRow(ctx, `
-		SELECT id, order_id, customer_id, amount_cents, status, method, created_at
+		SELECT id, order_id, customer_id, amount_minor, status, method, created_at
 		FROM payments WHERE id = $1
-	`, id).Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountCents, &out.Status, &out.Method, &out.CreatedAt)
+	`, id).Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountMinor, &out.Status, &out.Method, &out.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -56,9 +56,9 @@ func (r *PaymentsRepo) GetByID(ctx context.Context, id string) (*models.Payment,
 func (r *PaymentsRepo) GetByOrderID(ctx context.Context, orderID string) (*models.Payment, error) {
 	out := &models.Payment{}
 	err := r.Pool.QueryRow(ctx, `
-		SELECT id, order_id, customer_id, amount_cents, status, method, created_at
+		SELECT id, order_id, customer_id, amount_minor, status, method, created_at
 		FROM payments WHERE order_id = $1
-	`, orderID).Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountCents, &out.Status, &out.Method, &out.CreatedAt)
+	`, orderID).Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountMinor, &out.Status, &out.Method, &out.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -77,8 +77,8 @@ func (r *PaymentsRepo) MarkCompletedByOrderID(ctx context.Context, orderID strin
 	err := r.Pool.QueryRow(ctx, `
 		UPDATE payments SET status = 'COMPLETED'
 		WHERE order_id = $1 AND status = 'PENDING'
-		RETURNING id, order_id, customer_id, amount_cents, status, method, created_at
-	`, orderID).Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountCents, &out.Status, &out.Method, &out.CreatedAt)
+		RETURNING id, order_id, customer_id, amount_minor, status, method, created_at
+	`, orderID).Scan(&out.ID, &out.OrderID, &out.CustomerID, &out.AmountMinor, &out.Status, &out.Method, &out.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Nothing in PENDING — either no payment for this order, or it was
 		// already collected/failed. Caller decides which.

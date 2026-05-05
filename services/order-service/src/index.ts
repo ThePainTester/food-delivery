@@ -25,7 +25,7 @@ async function main() {
 
   const restaurants = new RestaurantClient(cfg.restaurantServiceUrl);
   const repo = new OrdersRepo(pool);
-  const ordersService = new OrdersService(repo, rabbit, restaurants, cfg.deliveryFeeCents);
+  const ordersService = new OrdersService(repo, rabbit, restaurants, cfg.deliveryFeeMinor);
   const locationService = new LocationService(repo, redis, restaurants, cfg.locationTtlSeconds);
 
   await startConsumers(rabbit, pool, ordersService);

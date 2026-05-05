@@ -7,7 +7,7 @@ import (
 )
 
 // FromFloat converts a decimal-as-float64 (as it arrives in JSON events)
-// to integer cents. Rounds half-away-from-zero.
+// to integer minor units. Rounds half-away-from-zero.
 func FromFloat(v float64) int64 {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0
@@ -15,7 +15,7 @@ func FromFloat(v float64) int64 {
 	return int64(math.Round(v * 100))
 }
 
-// FromString parses a decimal string ("28.00") into integer cents.
+// FromString parses a decimal string ("28.00") into integer minor units.
 func FromString(s string) (int64, error) {
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
@@ -24,17 +24,17 @@ func FromString(s string) (int64, error) {
 	return FromFloat(f), nil
 }
 
-// ToString formats cents as a fixed-2-decimal string ("28.00").
-func ToString(cents int64) string {
+// ToString formats minor units as a fixed-2-decimal string ("28.00").
+func ToString(minor int64) string {
 	sign := ""
-	if cents < 0 {
+	if minor < 0 {
 		sign = "-"
-		cents = -cents
+		minor = -minor
 	}
-	return fmt.Sprintf("%s%d.%02d", sign, cents/100, cents%100)
+	return fmt.Sprintf("%s%d.%02d", sign, minor/100, minor%100)
 }
 
-// ToFloat formats cents as a float ("28.00" → 28.0). Used in event payloads.
-func ToFloat(cents int64) float64 {
-	return float64(cents) / 100.0
+// ToFloat formats minor units as a float ("28.00" → 28.0). Used in event payloads.
+func ToFloat(minor int64) float64 {
+	return float64(minor) / 100.0
 }
