@@ -74,6 +74,16 @@ spec:
                 secretKeyRef: { name: rabbitmq-credentials, key: password }
             - name: RABBIT_URL
               value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@rabbitmq:5672
+            - name: OTEL_SERVICE_NAME
+              value: order-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=$(POD_NAMESPACE)"
           volumeMounts:
             - name: jwt
               mountPath: /run/jwt

@@ -12,3 +12,6 @@ spec:
     - name: mongo
       port: 27017
       targetPort: mongo
+    - name: metrics
+      port: 9216
+      targetPort: metrics

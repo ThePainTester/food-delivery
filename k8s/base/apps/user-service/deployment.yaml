@@ -14,21 +14,11 @@ spec:
       labels:
         app: user-service
     spec:
-      # The Dockerfile creates user `app` with UID/GID 10001. Setting fsGroup
-      # makes K8s chgrp Secret-projected files to that gid and add group-read,
-      # so the non-root app user can actually read /run/jwt/*.
+      # fsGroup matches the `app` user (UID/GID 10001) baked into the
+      # Dockerfile so projected Secret files are readable by the app.
       securityContext:
         fsGroup: 10001
-      # Run versioned migrations against users-db before the app starts.
-      # Reuses the same image (which bakes in `migrate` and /migrations) with
-      # an overridden command. Idempotent — golang-migrate tracks applied
-      # versions in a `schema_migrations` table on the target DB.
       initContainers:
-        # Block until users-db is actually accepting connections. The DB is
-        # exposed via a headless Service, which returns no DNS records until
-        # at least one backing pod is Ready — so we have to wait it out
-        # rather than failing fast. pg_isready exits non-zero (no DNS, no
-        # port, or postgres still booting) until it's truly ready.
         - name: wait-for-db
           image: postgres:16-alpine
           command: ["sh", "-c"]
@@ -50,8 +40,8 @@ spec:
             - "-path=/migrations"
             - "-database=$(DATABASE_URL)"
             - "up"
-          # Order matters: K8s' $(VAR) interpolation only sees env vars that
-          # are listed earlier in this same env block.
+          # K8s $(VAR) interpolation only sees env vars listed earlier
+          # in the same block — keep DB_USER/DB_PASSWORD before DATABASE_URL.
           env:
             - name: DB_USER
               valueFrom:
@@ -63,9 +53,6 @@ spec:
               value: postgres://$(DB_USER):$(DB_PASSWORD)@users-db:5432/users?sslmode=disable
       containers:
         - name: user-service
-          # Overlays patch the tag (:dev / :staging / pinned). The image rewriter
-          # also rewrites the initContainer above since it references the same
-          # image name.
           image: food-delivery/user-service:latest
           imagePullPolicy: IfNotPresent
           ports:
@@ -83,6 +70,16 @@ spec:
                 secretKeyRef: { name: users-db-credentials, key: password }
             - name: DATABASE_URL
               value: postgres://$(DB_USER):$(DB_PASSWORD)@users-db:5432/users?sslmode=disable
+            - name: OTEL_SERVICE_NAME
+              value: user-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=$(POD_NAMESPACE)"
           volumeMounts:
             - name: jwt
               mountPath: /run/jwt

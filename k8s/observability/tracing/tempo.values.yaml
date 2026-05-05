@@ -1,0 +1,31 @@
+# Helm values for grafana/tempo (single-binary, filesystem backend).
+# For prod, swap storage.trace.backend to s3/gcs/azure and drop the PVC.
+
+tempo:
+  retention: 168h    # 7d
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: http://kps-prometheus.observability.svc:9090/api/v1/write
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+persistence:
+  enabled: true
+  size: 10Gi
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { memory: 1Gi }
+
+serviceMonitor:
+  enabled: true

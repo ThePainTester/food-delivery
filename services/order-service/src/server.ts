@@ -4,6 +4,7 @@ import pinoHttp from "pino-http";
 import { Config } from "./config";
 import { errorHandler } from "./errors";
 import { logger } from "./logger";
+import { metricsMiddleware, metricsRouter } from "./observability";
 import { ordersRouter } from "./routes/orders";
 import { locationRouter } from "./routes/location";
 import { LocationService } from "./services/location";
@@ -19,6 +20,8 @@ export function buildApp({ cfg, orders, location }: Wired): express.Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(pinoHttp({ logger }));
+  app.use(metricsMiddleware);
+  app.use(metricsRouter());
 
   const jwt = { publicKey: cfg.jwtPublicKey, issuer: cfg.jwtIssuer };
 

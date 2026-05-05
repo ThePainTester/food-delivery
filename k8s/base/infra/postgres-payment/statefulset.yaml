@@ -45,6 +45,24 @@ spec:
               command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
             initialDelaySeconds: 30
             periodSeconds: 15
+        - name: exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          args: ["--auto-discover-databases"]
+          env:
+            - name: DATA_SOURCE_URI
+              value: "localhost:5432/payments?sslmode=disable"
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef: { name: payments-db-credentials, key: username }
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef: { name: payments-db-credentials, key: password }
+          ports:
+            - name: metrics
+              containerPort: 9187
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 128Mi }
   volumeClaimTemplates:
     - metadata:
         name: data

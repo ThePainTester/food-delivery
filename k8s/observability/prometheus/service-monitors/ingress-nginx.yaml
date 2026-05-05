@@ -1,0 +1,30 @@
+# ServiceMonitor for the NGINX Ingress Controller (Minikube ingress addon
+# ships `ingress-nginx-controller-metrics` on :10254). Adjust the selector
+# if you installed the controller differently.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ingress-nginx
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [ingress-nginx]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      relabelings:
+        # The ingress controller's namespace doesn't match food-delivery-*,
+        # so `env` stays unset on these series — fine; ingress is platform-wide.
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1

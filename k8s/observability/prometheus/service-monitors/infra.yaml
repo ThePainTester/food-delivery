@@ -1,0 +1,154 @@
+# ServiceMonitors for the infra layer (Postgres × 3, Mongo, Redis, RabbitMQ).
+# Each endpoint stamps `service` (from the K8s Service name) and `env`
+# (from food-delivery-{env} namespace) so the label contract stays
+# stable across chart upgrades.
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-user
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: users-db }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-order
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: orders-db }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-payment
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: payments-db }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mongodb
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: restaurants-db }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: orders-cache }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rabbitmq
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: rabbitmq }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1

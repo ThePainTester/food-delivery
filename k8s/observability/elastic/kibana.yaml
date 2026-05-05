@@ -1,0 +1,25 @@
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: kibana
+  namespace: observability
+spec:
+  version: 9.0.1
+  count: 1
+  elasticsearchRef:
+    name: elasticsearch
+  # ECK auto-configures the ES connection (host, user, password, CA)
+  # whenever `elasticsearchRef` is set, so we don't redeclare those.
+  config:
+    server.publicBaseUrl: http://kibana.observability.local
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+  podTemplate:
+    spec:
+      containers:
+        - name: kibana
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits:   { memory: 1Gi }

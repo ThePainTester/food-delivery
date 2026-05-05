@@ -51,6 +51,27 @@ spec:
                 - "db.runCommand({ping:1}).ok"
             initialDelaySeconds: 30
             periodSeconds: 20
+        - name: exporter
+          image: percona/mongodb_exporter:0.40
+          args:
+            - "--collect-all"
+            - "--compatible-mode"
+            - "--web.listen-address=:9216"
+          env:
+            - name: MONGODB_USER
+              valueFrom:
+                secretKeyRef: { name: restaurants-db-credentials, key: username }
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: restaurants-db-credentials, key: password }
+            - name: MONGODB_URI
+              value: "mongodb://$(MONGODB_USER):$(MONGODB_PASSWORD)@localhost:27017/admin"
+          ports:
+            - name: metrics
+              containerPort: 9216
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 128Mi }
   volumeClaimTemplates:
     - metadata:
         name: data

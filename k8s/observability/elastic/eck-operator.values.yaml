@@ -1,0 +1,7 @@
+# Helm values for elastic/eck-operator.
+
+managedNamespaces: []   # empty = watch all namespaces
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits:   { memory: 512Mi }

@@ -13,3 +13,6 @@ spec:
     - name: pg
       port: 5432
       targetPort: pg
+    - name: metrics
+      port: 9187
+      targetPort: metrics

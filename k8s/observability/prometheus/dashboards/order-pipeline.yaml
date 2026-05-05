@@ -1,0 +1,112 @@
+# Cross-service "Order pipeline" dashboard — order → payment lifecycle.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-order-pipeline
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Food Delivery
+data:
+  order-pipeline.json: |
+    {
+      "title": "Food Delivery — Order Pipeline",
+      "uid": "fd-order-pipeline",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-3h", "to": "now" },
+      "tags": ["food-delivery", "pipeline"],
+      "templating": {
+        "list": [
+          {
+            "name": "env",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(http_requests_total, env)",
+            "refresh": 2,
+            "includeAll": false
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Orders placed (POST /orders) — 5m rate",
+          "gridPos": { "x": 0, "y": 0, "w": 8, "h": 6 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total{env=\"$env\",service=\"order-service\",method=\"POST\",path=~\"/orders\",status=~\"2..\"}[5m]))"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Payment success rate (5m)",
+          "gridPos": { "x": 8, "y": 0, "w": 8, "h": 6 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total{env=\"$env\",service=\"payment-service\",status=~\"2..\"}[5m])) / clamp_min(sum(rate(http_requests_total{env=\"$env\",service=\"payment-service\"}[5m])), 0.001)"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "RabbitMQ unacked",
+          "gridPos": { "x": 16, "y": 0, "w": 8, "h": 6 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rabbitmq_queue_messages_unacknowledged{env=\"$env\"})" }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "p95 latency by service",
+          "gridPos": { "x": 0, "y": 6, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket{env=\"$env\",service=~\"order-service|restaurant-service|payment-service\"}[5m])))",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "RabbitMQ queue depth",
+          "gridPos": { "x": 12, "y": 6, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "rabbitmq_queue_messages_ready{env=\"$env\"}",
+              "legendFormat": "ready · {{queue}}"
+            },
+            {
+              "expr": "rabbitmq_queue_messages_unacknowledged{env=\"$env\"}",
+              "legendFormat": "unacked · {{queue}}"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Errors per service (5xx req/s)",
+          "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum by (service) (rate(http_requests_total{env=\"$env\",service=~\"order-service|restaurant-service|payment-service|user-service\",status=~\"5..\"}[5m]))",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        }
+      ]
+    }

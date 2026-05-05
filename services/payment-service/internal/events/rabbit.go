@@ -7,9 +7,16 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/food-delivery/payment-service/internal/observability"
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("payment-service/events")
 
 const (
 	Exchange      = "food_delivery"
@@ -119,13 +126,26 @@ func (r *Rabbit) Publish(ctx context.Context, eventType string, data any) error 
 	if err != nil {
 		return err
 	}
-	return r.ch.PublishWithContext(ctx, Exchange, eventType, false, false, amqp.Publishing{
+	ctx, span := tracer.Start(ctx, "amqp.publish "+eventType,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			semconv.MessagingSystemRabbitmq,
+			attribute.String("messaging.destination.name", Exchange),
+			attribute.String("messaging.rabbitmq.routing_key", eventType),
+			attribute.String("messaging.message.id", env.EventID),
+		),
+	)
+	defer span.End()
+
+	pub := amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		MessageId:    env.EventID,
 		Timestamp:    time.Now().UTC(),
 		Body:         body,
-	})
+	}
+	observability.InjectAMQP(ctx, &pub)
+	return r.ch.PublishWithContext(ctx, Exchange, eventType, false, false, pub)
 }
 
 type Handler func(ctx context.Context, env *Envelope) error
@@ -152,8 +172,18 @@ func (r *Rabbit) consumeLoop(deliveries <-chan amqp.Delivery, handler Handler) {
 			_ = d.Nack(false, false)
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		parentCtx := observability.ExtractAMQP(context.Background(), d)
+		ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+		ctx, span := tracer.Start(ctx, "amqp.consume "+env.EventType,
+			trace.WithSpanKind(trace.SpanKindConsumer),
+			trace.WithAttributes(
+				semconv.MessagingSystemRabbitmq,
+				attribute.String("messaging.destination.name", r.mainQueue),
+				attribute.String("messaging.message.id", env.EventID),
+			),
+		)
 		err := handler(ctx, &env)
+		span.End()
 		cancel()
 		if err == nil {
 			_ = d.Ack(false)
@@ -172,7 +202,7 @@ func (r *Rabbit) consumeLoop(deliveries <-chan amqp.Delivery, handler Handler) {
 			continue
 		}
 		slog.Warn("consumer error → retry", "event_id", env.EventID, "retries", retries, "err", err)
-		// Send to retry queue. TTL there → dead-letters back to main queue.
+		// retry queue → TTL expires → dead-letters back to main queue.
 		_ = r.ch.PublishWithContext(context.Background(), "", r.retryQueue, false, false, amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,

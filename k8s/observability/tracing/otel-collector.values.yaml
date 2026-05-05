@@ -1,0 +1,63 @@
+# Helm values for open-telemetry/opentelemetry-collector (deployment mode).
+# Apps push OTLP gRPC to otel-collector.observability.svc:4317; the
+# collector batches/processes and exports to Tempo.
+
+mode: deployment
+replicaCount: 1
+fullnameOverride: otel-collector
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 512Mi}
+
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    protocol: TCP
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    protocol: TCP
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc: {endpoint: 0.0.0.0:4317}
+        http: {endpoint: 0.0.0.0:4318}
+  processors:
+    batch: {}
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 75
+      spike_limit_percentage: 25
+    # Stamp `env=dev|staging|prod` on every trace, matching the logs/metrics
+    # convention (extracted from the food-delivery-* namespace name).
+    resource:
+      attributes:
+        - key: env
+          from_attribute: k8s.namespace.name
+          action: insert
+        - key: env
+          pattern: ^food-delivery-(?P<env>.*)$
+          action: extract
+  exporters:
+    otlp/tempo:
+      endpoint: tempo.observability.svc:4317
+      tls: {insecure: true}
+    debug: {}
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, resource, batch]
+        exporters: [otlp/tempo]
+
+serviceMonitor:
+  enabled: true

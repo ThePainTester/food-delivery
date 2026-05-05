@@ -1,0 +1,79 @@
+# Frontend NGINX (static SPA) dashboard, fed by the nginx-prometheus-exporter
+# sidecar on the frontend Deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-frontend-nginx
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Food Delivery
+data:
+  frontend-nginx.json: |
+    {
+      "title": "Food Delivery — Frontend NGINX",
+      "uid": "fd-frontend-nginx",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "tags": ["food-delivery", "frontend"],
+      "templating": {
+        "list": [
+          {
+            "name": "env",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(nginx_connections_active, env)",
+            "refresh": 2,
+            "includeAll": false
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Active connections",
+          "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(nginx_connections_active{env=\"$env\"})" }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Connections (active / reading / writing / waiting)",
+          "gridPos": { "x": 6, "y": 0, "w": 18, "h": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(nginx_connections_active{env=\"$env\"})",  "legendFormat": "active" },
+            { "expr": "sum(nginx_connections_reading{env=\"$env\"})", "legendFormat": "reading" },
+            { "expr": "sum(nginx_connections_writing{env=\"$env\"})", "legendFormat": "writing" },
+            { "expr": "sum(nginx_connections_waiting{env=\"$env\"})", "legendFormat": "waiting" }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Requests / sec",
+          "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(nginx_http_requests_total{env=\"$env\"}[5m]))" }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Connections accepted vs handled (rate)",
+          "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(nginx_connections_accepted{env=\"$env\"}[5m]))", "legendFormat": "accepted" },
+            { "expr": "sum(rate(nginx_connections_handled{env=\"$env\"}[5m]))",  "legendFormat": "handled" }
+          ]
+        }
+      ]
+    }

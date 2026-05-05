@@ -1,0 +1,79 @@
+# Logstash pipeline: parse JSON-on-stdout from app containers + nginx,
+# extract trace_id/span_id/level/service, route everything to ES into
+# food-delivery-logs-* indices.
+apiVersion: logstash.k8s.elastic.co/v1alpha1
+kind: Logstash
+metadata:
+  name: logstash
+  namespace: observability
+spec:
+  version: 9.0.1
+  count: 1
+  elasticsearchRefs:
+    - name: elasticsearch
+      clusterName: es
+  pipelines:
+    - pipeline.id: main
+      config.string: |
+        input {
+          beats { port => 5044 }
+        }
+        filter {
+          # Filebeat already attaches kubernetes.* metadata (namespace, pod, labels).
+          # Promote the namespace into a top-level `env` (food-delivery-dev → dev).
+          if [kubernetes][namespace] {
+            grok {
+              match => { "[kubernetes][namespace]" => "food-delivery-(?<env>%{WORD})" }
+              tag_on_failure => []
+            }
+          }
+
+          # Container stdout is already a single line of JSON for our apps.
+          # Try to parse; on failure, leave the raw `message` alone (e.g. stack traces).
+          if [message] =~ /^\{/ {
+            json {
+              source => "message"
+              skip_on_invalid_json => true
+              target => "app"
+            }
+            # Promote a few hot fields out of `app.*` for easier Kibana use.
+            if [app][trace_id] { mutate { copy => { "[app][trace_id]" => "trace_id" } } }
+            if [app][span_id]  { mutate { copy => { "[app][span_id]"  => "span_id"  } } }
+            if [app][level]    { mutate { copy => { "[app][level]"    => "level"    } } }
+            if [app][service]  { mutate { copy => { "[app][service]"  => "service"  } } }
+            if [app][msg]      { mutate { copy => { "[app][msg]"      => "msg"      } } }
+          }
+        }
+        output {
+          # ES_ES_* is ECK-injected from elasticsearchRefs[0].clusterName=es;
+          # the doubled ES_ is the cluster nickname + ECK's own field prefix.
+          elasticsearch {
+            hosts => [ "${ES_ES_HOSTS}" ]
+            user => "${LOGSTASH_USER}"
+            password => "${LOGSTASH_PASSWORD}"
+            ssl_enabled => false
+            index => "food-delivery-logs-%{+YYYY.MM.dd}"
+          }
+        }
+  services:
+    - name: beats
+      service:
+        spec:
+          type: ClusterIP
+          ports:
+            - port: 5044
+              name: beats
+              protocol: TCP
+              targetPort: 5044
+  podTemplate:
+    spec:
+      containers:
+        - name: logstash
+          envFrom:
+            - secretRef:
+                name: logstash-writer-credentials
+          resources:
+            # Logstash buffers in-memory when ES briefly rejects writes
+            # (e.g. rolling restart); 2Gi gives headroom for retry spikes.
+            requests: { cpu: 100m, memory: 1Gi }
+            limits:   { memory: 2Gi }

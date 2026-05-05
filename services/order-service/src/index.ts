@@ -1,3 +1,8 @@
+// MUST be the first import — auto-instrumentations monkey-patch
+// http/express/pg/amqplib/ioredis at require time.
+import { startTracing, shutdownTracing } from "./observability";
+startTracing();
+
 import { RestaurantClient } from "./clients/restaurants";
 import { loadConfig } from "./config";
 import { startConsumers } from "./consumers";
@@ -36,6 +41,7 @@ async function main() {
     await rabbit.close();
     await pool.end();
     redis.disconnect();
+    await shutdownTracing();
     process.exit(0);
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));

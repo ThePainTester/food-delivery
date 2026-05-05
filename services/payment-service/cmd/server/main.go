@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/food-delivery/payment-service/internal/auth"
@@ -12,9 +13,11 @@ import (
 	"github.com/food-delivery/payment-service/internal/events"
 	"github.com/food-delivery/payment-service/internal/handlers"
 	"github.com/food-delivery/payment-service/internal/middleware"
+	"github.com/food-delivery/payment-service/internal/observability"
 	"github.com/food-delivery/payment-service/internal/repositories"
 	"github.com/food-delivery/payment-service/internal/services"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func main() {
@@ -23,7 +26,16 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	slog.SetDefault(observability.JSONLogger("payment-service"))
+
 	ctx := context.Background()
+	shutdown, err := observability.InitTracer(ctx, "payment-service")
+	if err != nil {
+		slog.Error("otel init failed", "err", err)
+	} else {
+		defer func() { _ = shutdown(context.Background()) }()
+	}
+
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db: %v", err)
@@ -50,8 +62,13 @@ func main() {
 
 	h := handlers.New(svc)
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(otelgin.Middleware("payment-service"))
+	r.Use(observability.PromMiddleware())
+
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	r.GET("/metrics", observability.MetricsHandler())
 
 	authed := r.Group("/payments", middleware.RequireAuth(verifier))
 	{
@@ -61,7 +78,7 @@ func main() {
 		authed.GET("/:id", h.Get)
 	}
 
-	log.Printf("payment-service listening on :%s", cfg.Port)
+	slog.Info("payment-service listening", "port", cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("server: %v", err)
 	}

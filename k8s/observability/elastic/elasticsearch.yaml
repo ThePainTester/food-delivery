@@ -1,0 +1,43 @@
+# Single-node Elasticsearch for local/dev observability.
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: elasticsearch
+  namespace: observability
+spec:
+  version: 9.0.1
+  # Logstash writes via a least-privilege file-realm user. The role lives
+  # in es-custom-roles (committed); the user+bcrypt hash live in
+  # logstash-writer-filerealm (generated at install time).
+  auth:
+    roles:
+      - secretName: es-custom-roles
+    fileRealm:
+      - secretName: logstash-writer-filerealm
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        node.store.allow_mmap: false # avoid vm.max_map_count tuning on Minikube hosts
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms2g -Xmx2g"
+              resources:
+                # ECK requires memory request == limit. Heap is 2Gi, the
+                # other 2Gi covers non-heap (metaspace, direct buffers,
+                # off-heap Lucene, file-realm reload churn).
+                requests: {cpu: 200m, memory: 4Gi}
+                limits:   {memory: 4Gi}
+      volumeClaimTemplates:
+        - metadata: {name: elasticsearch-data}
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources: {requests: {storage: 10Gi}}
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true

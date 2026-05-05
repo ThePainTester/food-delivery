@@ -34,6 +34,15 @@ spec:
             exec: { command: ["redis-cli", "ping"] }
             initialDelaySeconds: 15
             periodSeconds: 15
+        - name: exporter
+          image: oliver006/redis_exporter:v1.62.0-alpine
+          args: ["--redis.addr=redis://localhost:6379"]
+          ports:
+            - name: metrics
+              containerPort: 9121
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { memory: 64Mi }
       volumes:
         - name: data
           emptyDir: {}

@@ -4,3 +4,16 @@ motor==3.6.0
 pydantic==2.9.2
 pydantic-settings==2.5.2
 pyjwt[crypto]==2.9.0
+
+# Observability
+# OTel >=1.29 / instrumentation >=0.50b0 dropped the `pkg_resources`
+# import (replaced with `importlib.metadata`), which is what made the
+# 0.48b0 line fail under python:3.12-slim with
+# `ModuleNotFoundError: No module named 'pkg_resources'`.
+prometheus-fastapi-instrumentator==7.0.0
+python-json-logger==2.0.7
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-exporter-otlp-proto-grpc==1.29.0
+opentelemetry-instrumentation-fastapi==0.50b0
+opentelemetry-instrumentation-pymongo==0.50b0

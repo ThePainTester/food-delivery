@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/food-delivery/user-service/internal/auth"
@@ -10,7 +11,9 @@ import (
 	"github.com/food-delivery/user-service/internal/db"
 	"github.com/food-delivery/user-service/internal/handlers"
 	"github.com/food-delivery/user-service/internal/middleware"
+	"github.com/food-delivery/user-service/internal/observability"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func main() {
@@ -19,7 +22,16 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	slog.SetDefault(observability.JSONLogger("user-service"))
+
 	ctx := context.Background()
+	shutdown, err := observability.InitTracer(ctx, "user-service")
+	if err != nil {
+		slog.Error("otel init failed", "err", err)
+	} else {
+		defer func() { _ = shutdown(context.Background()) }()
+	}
+
 	store, err := db.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db: %v", err)
@@ -33,9 +45,13 @@ func main() {
 
 	h := handlers.New(store, signer)
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(otelgin.Middleware("user-service"))
+	r.Use(observability.PromMiddleware())
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	r.GET("/metrics", observability.MetricsHandler())
 	r.GET("/.well-known/jwks.pem", func(c *gin.Context) {
 		c.Data(http.StatusOK, "application/x-pem-file", cfg.JWTPublicKey)
 	})
@@ -53,7 +69,7 @@ func main() {
 		users.GET("/:id", h.GetUser)
 	}
 
-	log.Printf("user-service listening on :%s", cfg.Port)
+	slog.Info("user-service listening", "port", cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("server: %v", err)
 	}

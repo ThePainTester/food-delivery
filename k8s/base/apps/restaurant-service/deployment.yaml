@@ -16,9 +16,6 @@ spec:
     spec:
       securityContext:
         fsGroup: 10001
-      # Block until restaurants-db (Mongo) is reachable. Mongo's headless
-      # Service returns no DNS records until its pod is Ready, same race as
-      # the Postgres-backed services.
       initContainers:
         - name: wait-for-db
           image: busybox:1.36
@@ -48,6 +45,16 @@ spec:
                 secretKeyRef: { name: restaurants-db-credentials, key: password }
             - name: MONGO_URL
               value: mongodb://$(MONGO_USER):$(MONGO_PASSWORD)@restaurants-db:27017/restaurants?authSource=admin
+            - name: OTEL_SERVICE_NAME
+              value: restaurant-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=$(POD_NAMESPACE)"
           volumeMounts:
             - name: jwt
               mountPath: /run/jwt
