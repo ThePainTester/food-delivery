@@ -17,6 +17,15 @@ spec:
       securityContext:
         fsGroup: 10001
       initContainers:
+        - name: wait-for-rabbit
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              until nc -z rabbitmq 5672; do
+                echo "waiting for rabbitmq..."
+                sleep 2
+              done
         - name: wait-for-db
           image: postgres:16-alpine
           command: ["sh", "-c"]
