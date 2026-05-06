@@ -275,6 +275,55 @@ URLs once the stack is healthy:
 | RabbitMQ UI | <http://localhost:15672> (`guest` / `guest`) |
 | Direct service ports (dev only) | `:8081` user, `:8082` restaurant, `:8083` order, `:8084` payment |
 
+## Image Build & Publish
+
+Both the Compose staging/prod stacks and the Kubernetes staging/prod overlays
+pull images from a container registry — by default GitHub Container Registry
+(`ghcr.io/<owner>/<service>:<version>`). The same publish flow feeds both.
+
+```bash
+# Log in once (needs a PAT with write:packages)
+echo "$CR_PAT" | docker login ghcr.io -u <github-username> --password-stdin
+
+# Publish a single service
+./scripts/publish.sh <service> <version>
+
+# Publish all services at one version
+for s in user-service restaurant-service order-service payment-service frontend; do
+  ./scripts/publish.sh "$s" v1.0.0
+done
+```
+
+The published tag must match what the consuming env expects:
+
+- **Compose staging/prod** read `REGISTRY` and `IMAGE_TAG` from
+  `compose/.env.<env>`. Set them to the registry namespace and version you
+  just pushed.
+- **Kubernetes staging/prod** pin the registry + tag inside
+  `k8s/overlays/<env>/kustomization.yaml`'s `images:` block. Update
+  `newName` and `newTag` after each publish, or run
+  `kustomize edit set image food-delivery/<svc>=ghcr.io/<owner>/<svc>:<version>`
+  from inside the overlay directory.
+
+Staging and prod follow the **same** convention — both pin a specific semver
+tag pushed via the same script. There is no floating `:staging` tag; staging
+tracks prod's exact version.
+
+> The registry namespace and the overlay tags are currently hardcoded:
+> `OWNER=thepaintester` in `scripts/publish.sh` and
+> `ghcr.io/thepaintester/<svc>:v1.0.0` in
+> `k8s/overlays/{staging,prod}/kustomization.yaml`. For a fork, change `OWNER`
+> in `publish.sh` (or expose it via env var) and update each overlay's
+> `newName` / `newTag` to your namespace and the version you publish.
+
+## Building Images Locally
+
+You can build images locally and specify version using `./scripts/build.sh`
+
+```bash
+./scripts/build.sh <service> <version>
+```
+
 ## Compose Deployment (multi-environment)
 
 All three environments are isolated by `COMPOSE_PROJECT_NAME` (set in their
@@ -293,9 +342,11 @@ docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
 
 ### Staging
 
-Pulls images at the `:staging` tag from `${REGISTRY}` (set in `.env.staging`).
-Exposes the gateway on `:8080` plus the RabbitMQ UI; data stores stay
-internal. `restart: unless-stopped`.
+Pulls pinned `${REGISTRY}/<svc>:${IMAGE_TAG}` images — same shape as prod, since
+staging tracks prod's exact version so the pre-release env matches what's about
+to ship. See [Image Build & Publish](#image-build--publish) for how to push the
+tag that `.env.staging` references. Exposes the gateway on `:8080` plus the
+RabbitMQ UI; data stores stay internal. `restart: unless-stopped`.
 
 ```bash
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.staging.yml \
@@ -348,23 +399,23 @@ docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
 Same-tag rebuilds need a manual `kubectl rollout restart deploy/<service>`
 because `IfNotPresent` won't refetch.
 
-### 2. Publish images to ghcr
+### 2. Point staging/prod overlays at your published images
 
-`scripts/publish.sh` publish a service to your github container registry.
-You need to be logged in to github with docker to be able to push images.
+Skip for `dev` (it uses the local Minikube-built image). For staging/prod,
+publish the images first (see [Image Build & Publish](#image-build--publish)),
+then update each overlay's `images:` block so `newName` is your registry
+namespace and `newTag` is the version you pushed:
 
 ```bash
-./scripts/publish.sh <service> <version>
+cd k8s/overlays/staging   # or prod
+for s in user-service restaurant-service order-service payment-service frontend; do
+  kustomize edit set image food-delivery/$s=ghcr.io/<owner>/$s:v1.0.0
+done
 ```
 
-### 3. Edit Kustomize overlays to match your ghcr
+(or edit the `kustomization.yaml` directly).
 
-Edit the image `newName` and `newTag` to match the your registry name
-and the tag you set for your published services.
-
-You need to edit `./k8s/overlays/prod/kustomization.yaml` and `./k8s/overlays/staging/kustomization.yaml`
-
-### 4. Bootstrap the application namespace
+### 3. Bootstrap the application namespace
 
 `scripts/app-env-bootstrap.sh` creates the namespace, generates the JWT
 keypair as a `Secret` (`jwt-privkey`) + `ConfigMap` (`jwt-pubkey`), and (for
@@ -377,7 +428,7 @@ CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh food-delivery-staging
 CR_PAT=ghp_xxx ./scripts/app-env-bootstrap.sh food-delivery-prod
 ```
 
-### 5. Apply the overlay
+### 4. Apply the overlay
 
 ```bash
 kubectl apply -k k8s/overlays/dev
@@ -389,7 +440,7 @@ Each Deployment runs `golang-migrate` as an `initContainer` against its own
 Postgres before the app starts; migrations are baked into the service image.
 Re-applying is safe.
 
-### 6. Deploy the observability stack
+### 5. Deploy the observability stack
 
 One install, watching all three app namespaces:
 
@@ -414,7 +465,7 @@ kubectl apply -f k8s/observability/prometheus/dashboards/
 
 `scripts/observability-teardown.sh` is the symmetric uninstall.
 
-### 7. /etc/hosts
+### 6. /etc/hosts
 
 ```
 $(minikube ip)  dev.food-delivery.local
@@ -425,7 +476,7 @@ $(minikube ip)  kibana.observability.local
 $(minikube ip)  prometheus.observability.local
 ```
 
-### 8. Verify
+### 7. Verify
 
 ```bash
 kubectl -n food-delivery-dev get pods
@@ -467,13 +518,14 @@ Grafana Explore → Tempo. To go the other way: open a span in Tempo, click
 
 | Env | Tag | Source |
 |---|---|---|
-| Compose dev / k8s dev | `:dev` | local Compose build → minikube daemon |
-| Compose staging / k8s staging | `:staging` | registry pull |
-| Compose prod / k8s prod | pinned semver, e.g. `v1.0.0` | registry pull |
+| Compose dev / k8s dev | `:dev` (local) | Compose build, optionally into the Minikube daemon |
+| Compose staging / k8s staging | pinned semver, e.g. `v1.0.0` | `scripts/publish.sh` → ghcr |
+| Compose prod / k8s prod | pinned semver, e.g. `v1.0.0` | `scripts/publish.sh` → ghcr |
 
-The kustomize overlays rewrite the image name from the unprefixed
-`food-delivery/<service>` (used in base manifests) to the registry-qualified
-form for staging/prod.
+Staging and prod use the **same** pinned tag scheme — staging tracks prod's
+exact version. The kustomize overlays rewrite the image name from the
+unprefixed `food-delivery/<service>` (used in base manifests) to the
+registry-qualified form for staging/prod.
 
 **Secrets**
 
