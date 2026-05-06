@@ -102,13 +102,19 @@ sequenceDiagram
   Note over OS,MQ: Order is READY (restaurant ready, no rider yet)
   R->>OS: POST /orders/{id}/assign (self-claim)
   OS->>MQ: publish delivery.assigned
-  loop every few seconds while in transit
-    R->>OS: POST /orders/{id}/location {lat, lng}
-    OS->>Redis: SETEX order:{id}:loc TTL=120s
+  Note over R,C: Polling is a simplification — in production both sides<br/>would hold a WebSocket (or SSE) for push-driven updates.
+  par Rider pushes location
+    loop every few seconds while in transit
+      R->>OS: POST /orders/{id}/location {lat, lng}
+      OS->>Redis: SETEX order:{id}:loc TTL=120s
+    end
+  and Customer polls location
+    loop every few seconds while in transit
+      C->>OS: GET /orders/{id}/location
+      OS->>Redis: GET order:{id}:loc
+      OS-->>C: {lat, lng, updated_at}
+    end
   end
-  C->>OS: GET /orders/{id}/location
-  OS->>Redis: GET order:{id}:loc
-  OS-->>C: {lat, lng, updated_at}
   R->>OS: PATCH /orders/{id}/status PICKED_UP → DELIVERED
   OS->>MQ: publish order.picked_up, order.delivered
 ```
@@ -318,7 +324,7 @@ tracks prod's exact version.
 
 ## Building Images Locally
 
-You can build images locally and specify version using `./scripts/build.sh`
+You can build images locally and specify a version using `./scripts/build.sh`
 
 ```bash
 ./scripts/build.sh <service> <version>

@@ -11,7 +11,9 @@ Python 3.12 + FastAPI + MongoDB (Motor). Verifies JWTs issued by User Service us
 
 ## Endpoints
 - `GET /restaurants` — public; query: `cuisine`, `is_open`, `search`
+- `GET /restaurants/mine` — role=restaurant; the caller's own restaurant
 - `GET /restaurants/:id` — public
+- `GET /restaurants/:id/owner` — auth; resolves the owner user id
 - `POST /restaurants` — role=restaurant
 - `PATCH /restaurants/:id` — owner
 - `GET /restaurants/:id/menu` — public

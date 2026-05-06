@@ -15,8 +15,14 @@ Verifies JWTs (RS256) using the shared public key issued by User Service.
 - `LOCATION_TTL_SECONDS` (default 120)
 
 ## Events
-- **Publishes:** `OrderPlaced`, `OrderStatusChanged`, `OrderAccepted`, `OrderDelivered` on exchange `food_delivery` (topic, routing key = event name).
-- **Consumes:** `PaymentCompleted` (logs for now).
+
+Topic exchange `food_delivery`; routing key = event name.
+
+- **Publishes:** `order.placed`, `order.accepted`, `order.rejected`,
+  `order.ready`, `order.picked_up`, `order.delivered`, `order.cancelled`,
+  `delivery.assigned`.
+- **Consumes:** `payment.completed` (marks the order paid),
+  `payment.failed` (cancels the order).
 
 ## Endpoints
 - `POST /orders` — role=customer; validates menu via Restaurant Service, snapshots name/price.
