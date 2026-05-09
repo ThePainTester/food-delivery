@@ -8,9 +8,13 @@ services:
     restart: unless-stopped
   payments-db:
     restart: unless-stopped
+  dispatch-db:
+    restart: unless-stopped
   restaurants-db:
     restart: unless-stopped
   orders-cache:
+    restart: unless-stopped
+  dispatch-cache:
     restart: unless-stopped
   rabbitmq:
     restart: unless-stopped
@@ -29,6 +33,10 @@ services:
 
   payment-service:
     image: ${REGISTRY:-food-delivery}/payment-service:${IMAGE_TAG:-staging}
+    restart: unless-stopped
+
+  dispatch-service:
+    image: ${REGISTRY:-food-delivery}/dispatch-service:${IMAGE_TAG:-staging}
     restart: unless-stopped
 
   frontend:

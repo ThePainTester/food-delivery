@@ -15,7 +15,6 @@ export function locationChannel(orderId: string): string {
 // Per-recipient channels for order-state fan-out. Each backend mutation on
 // an order publishes a small envelope to one or more of these so connected
 // SSE clients refresh without polling.
-export const DELIVERY_LOBBY_CHANNEL = "delivery:lobby";
 
 export function customerOrdersChannel(userId: string): string {
   return `customer:${userId}:orders`;

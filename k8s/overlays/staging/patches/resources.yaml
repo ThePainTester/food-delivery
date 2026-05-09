@@ -51,3 +51,16 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits:   { cpu: 750m, memory: 384Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dispatch-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: dispatch-service
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 750m, memory: 384Mi }

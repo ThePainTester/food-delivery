@@ -1,7 +1,7 @@
-# ServiceMonitors for the infra layer (Postgres × 3, Mongo, Redis, RabbitMQ).
-# Each endpoint stamps `service` (from the K8s Service name) and `env`
-# (from food-delivery-{env} namespace) so the label contract stays
-# stable across chart upgrades.
+# ServiceMonitors for the infra layer (Postgres × 4, Mongo, Redis × 2,
+# RabbitMQ). Each endpoint stamps `service` (from the K8s Service name)
+# and `env` (from food-delivery-{env} namespace) so the label contract
+# stays stable across chart upgrades.
 
 ---
 apiVersion: monitoring.coreos.com/v1
@@ -82,7 +82,7 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: mongodb
+  name: mongodb-restaurant
   namespace: observability
   labels:
     app.kubernetes.io/part-of: food-delivery
@@ -107,7 +107,7 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: redis
+  name: redis-order
   namespace: observability
   labels:
     app.kubernetes.io/part-of: food-delivery
@@ -141,6 +141,56 @@ spec:
     matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
   selector:
     matchLabels: { app: rabbitmq }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-dispatch
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: dispatch-db }
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: env
+          regex: food-delivery-(.+)
+          replacement: $1
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis-dispatch
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: food-delivery
+spec:
+  namespaceSelector:
+    matchNames: [food-delivery-dev, food-delivery-staging, food-delivery-prod]
+  selector:
+    matchLabels: { app: dispatch-cache }
   endpoints:
     - port: metrics
       interval: 30s

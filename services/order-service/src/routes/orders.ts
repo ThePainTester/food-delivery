@@ -132,14 +132,5 @@ export function ordersRouter(deps: Deps): Router {
     }
   });
 
-  r.post("/:id/assign", auth, requireRole("delivery"), async (req, res, next) => {
-    try {
-      const order = await deps.service.assignDelivery(req.params.id, req.principal!.userId);
-      res.json(toApi(order));
-    } catch (e) {
-      next(e);
-    }
-  });
-
   return r;
 }

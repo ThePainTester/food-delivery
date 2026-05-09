@@ -103,6 +103,32 @@ services:
     networks:
       - orders-data-net
 
+  dispatch-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DISPATCH_DB_USER}
+      POSTGRES_PASSWORD: ${DISPATCH_DB_PASSWORD}
+      POSTGRES_DB: dispatch
+    volumes:
+      - dispatch-db-data:/var/lib/postgresql/data
+      - ../services/dispatch-service/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck: *postgres-healthcheck
+    networks:
+      - dispatch-data-net
+
+  dispatch-cache:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - dispatch-cache-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - dispatch-data-net
+
   # --- shared message broker ---------------------------------------------------
 
   rabbitmq:
@@ -208,6 +234,39 @@ services:
       - "traefik.http.routers.order.middlewares=strip-api@docker"
       - "traefik.http.services.order.loadbalancer.server.port=8080"
 
+  dispatch-service:
+    image: ${REGISTRY:-food-delivery}/dispatch-service:${IMAGE_TAG:-latest}
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://${DISPATCH_DB_USER}:${DISPATCH_DB_PASSWORD}@dispatch-db:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://dispatch-cache:6379
+      RABBIT_URL: amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@rabbitmq:5672
+      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWT_ISSUER: ${JWT_ISSUER:-user-service}
+      OFFER_TIMEOUT_MS: ${OFFER_TIMEOUT_MS:-12000}
+      DISPATCH_LOCK_TTL_S: ${DISPATCH_LOCK_TTL_S:-60}
+      SEARCH_RADIUS_M: ${SEARCH_RADIUS_M:-3000}
+      HEARTBEAT_STALE_MS: ${HEARTBEAT_STALE_MS:-30000}
+    volumes:
+      - *jwt-volume
+    depends_on:
+      dispatch-db:
+        condition: service_healthy
+      dispatch-cache:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-net
+      - rabbit-net
+      - dispatch-data-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dispatch.rule=PathPrefix(`/api/dispatch`)"
+      - "traefik.http.routers.dispatch.entrypoints=web"
+      - "traefik.http.routers.dispatch.middlewares=strip-api@docker"
+      - "traefik.http.services.dispatch.loadbalancer.server.port=8080"
+
   payment-service:
     image: ${REGISTRY:-food-delivery}/payment-service:${IMAGE_TAG:-latest}
     environment:
@@ -285,6 +344,8 @@ services:
         condition: service_started
       payment-service:
         condition: service_started
+      dispatch-service:
+        condition: service_started
     networks:
       - public-net
       - app-net
@@ -309,6 +370,8 @@ networks:
     internal: true
   restaurants-data-net:
     internal: true
+  dispatch-data-net:
+    internal: true
 
 volumes:
   users-db-data:
@@ -316,4 +379,6 @@ volumes:
   payments-db-data:
   restaurants-db-data:
   orders-cache-data:
+  dispatch-db-data:
+  dispatch-cache-data:
   rabbit-data:

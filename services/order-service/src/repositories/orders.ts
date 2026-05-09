@@ -39,7 +39,7 @@ const RETURNING = `id, customer_id, restaurant_id, delivery_user_id, items,
   created_at, updated_at`;
 
 export class OrdersRepo {
-  constructor(private pool: Pool) {}
+  constructor(private pool: Pool) { }
 
   async create(input: {
     id: string;
@@ -136,12 +136,14 @@ export class OrdersRepo {
     );
   }
 
-  /** Atomic self-assign: only succeeds if status=READY and unassigned. */
-  async claimDelivery(id: string, deliveryUserId: string): Promise<OrderRow | null> {
+  // Idempotent set: only writes when delivery_user_id is NULL or already
+  // matches. Lets duplicate "delivery.assigned" events from dispatch-service
+  // be replayed without clobbering an established assignment.
+  async setDeliveryUser(id: string, deliveryUserId: string): Promise<OrderRow | null> {
     const { rows } = await this.pool.query<OrderRow>(
       `UPDATE orders
           SET delivery_user_id = $2, updated_at = NOW()
-        WHERE id = $1 AND status = 'READY' AND delivery_user_id IS NULL
+        WHERE id = $1 AND (delivery_user_id IS NULL OR delivery_user_id = $2)
         RETURNING ${RETURNING}`,
       [id, deliveryUserId],
     );

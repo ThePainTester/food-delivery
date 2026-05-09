@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dispatch-db
+  labels:
+    app: dispatch-db
+spec:
+  clusterIP: None
+  selector:
+    app: dispatch-db
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+    - name: metrics
+      port: 9187
+      targetPort: metrics

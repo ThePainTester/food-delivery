@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dispatch-cache
+  labels:
+    app: dispatch-cache
+spec:
+  # Cache only — driver locations and offer dedupe keys are ephemeral by
+  # design. A restart drops a few in-flight offers (drivers' modals time
+  # out) but never causes a double assignment. Deployment + emptyDir.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dispatch-cache
+  template:
+    metadata:
+      labels:
+        app: dispatch-cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+        - name: exporter
+          image: oliver006/redis_exporter:v1.62.0-alpine
+          args: ["--redis.addr=redis://localhost:6379"]
+          ports:
+            - name: metrics
+              containerPort: 9121
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { memory: 64Mi }
+      volumes:
+        - name: data
+          emptyDir: {}

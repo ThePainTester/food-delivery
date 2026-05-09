@@ -13,6 +13,12 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PRIVKEY_MANIFEST="$REPO_ROOT/k8s/base/secrets/jwt-privkey.yaml"
 PUBKEY_MANIFEST="$REPO_ROOT/k8s/base/jwt-pubkey.yaml"
+INFRA_DIR="$REPO_ROOT/k8s/base/infra"
+
+# Random URL-safe-ish password — 24 bytes of entropy, base64'd.
+gen_password() {
+  openssl rand -base64 24 | tr -d '\n=+/' | head -c 24
+}
 
 # Create namespace if missing
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
@@ -49,5 +55,29 @@ if [ ! -f "$PRIVKEY_MANIFEST" ] || [ ! -f "$PUBKEY_MANIFEST" ]; then
 else
   echo "JWT keypair manifests already present; leaving them alone."
 fi
+
+# Generate per-infra Secret manifests if missing. Each subdir of k8s/base/infra
+# ships a `secret.example.yaml` template with `password: REPLACE_ME`; we copy
+# it to `secret.yaml` (gitignored) once and substitute a random password.
+# Idempotent — existing files are left alone so kubectl apply is repeatable.
+for tmpl in "$INFRA_DIR"/*/secret.example.yaml; do
+  [ -f "$tmpl" ] || continue
+  target="${tmpl%.example.yaml}.yaml"
+  if [ -f "$target" ]; then
+    echo "Infra secret already present: $target (leaving alone)."
+    continue
+  fi
+  pw="$(gen_password)"
+  # Use a python one-liner — sed -i with a base64-y password is brittle
+  # because of slashes/backslashes in the random string.
+  python3 - "$tmpl" "$target" "$pw" <<'PY'
+import sys, pathlib
+src, dst, pw = sys.argv[1:]
+text = pathlib.Path(src).read_text()
+text = text.replace("REPLACE_ME", pw)
+pathlib.Path(dst).write_text(text)
+PY
+  echo "Wrote $target"
+done
 
 echo "Namespace $NS bootstrapped."

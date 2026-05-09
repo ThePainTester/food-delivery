@@ -18,6 +18,8 @@ images:
     newTag: dev
   - name: food-delivery/payment-service
     newTag: dev
+  - name: food-delivery/dispatch-service
+    newTag: dev
   - name: food-delivery/frontend
     newTag: dev
 

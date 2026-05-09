@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dispatch-db
+  labels:
+    app: dispatch-db
+spec:
+  serviceName: dispatch-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dispatch-db
+  template:
+    metadata:
+      labels:
+        app: dispatch-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: pg
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: dispatch
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: dispatch-db-credentials, key: username }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: dispatch-db-credentials, key: password }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+        - name: exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          args: ["--auto-discover-databases"]
+          env:
+            - name: DATA_SOURCE_URI
+              value: "localhost:5432/dispatch?sslmode=disable"
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef: { name: dispatch-db-credentials, key: username }
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef: { name: dispatch-db-credentials, key: password }
+          ports:
+            - name: metrics
+              containerPort: 9187
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 128Mi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

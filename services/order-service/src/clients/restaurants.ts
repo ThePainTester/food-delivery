@@ -9,6 +9,8 @@ export interface MenuItemSnapshot {
 export interface RestaurantSnapshot {
   id: string;
   is_open: boolean;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export class RestaurantClient {

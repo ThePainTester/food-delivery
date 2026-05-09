@@ -7,10 +7,14 @@ services:
     ports: ["5434:5432"]
   payments-db:
     ports: ["5435:5432"]
+  dispatch-db:
+    ports: ["5436:5432"]
   restaurants-db:
     ports: ["27017:27017"]
   orders-cache:
     ports: ["6379:6379"]
+  dispatch-cache:
+    ports: ["6380:6379"]
   rabbitmq:
     ports:
       - "5672:5672"
@@ -42,6 +46,13 @@ services:
       context: ../services/payment-service
     image: food-delivery/payment-service:dev
     ports: ["8084:8080"]
+    restart: "no"
+
+  dispatch-service:
+    build:
+      context: ../services/dispatch-service
+    image: food-delivery/dispatch-service:dev
+    ports: ["8085:8080"]
     restart: "no"
 
   frontend:

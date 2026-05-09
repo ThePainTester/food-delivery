@@ -5,7 +5,6 @@ import { RestaurantClient } from "../clients/restaurants";
 import { badRequest, forbidden, notFound } from "../errors";
 import { logger } from "../logger";
 import {
-  DELIVERY_LOBBY_CHANNEL,
   customerOrdersChannel,
   deliveryOrdersChannel,
   restaurantOrdersChannel,
@@ -22,7 +21,8 @@ interface Deps {
 // caller's role:
 //   customer   -> their own orders
 //   restaurant -> the restaurant's orders (ownership verified)
-//   delivery   -> their own deliveries + the global READY-orders lobby
+//   delivery   -> their own deliveries (drivers receive offers via the
+//                 dispatch-service SSE stream, not via this one)
 //
 // Each Pub/Sub message is a small "order changed" envelope; the SPA reacts
 // by refetching whichever list/order it's currently rendering.
@@ -78,7 +78,7 @@ async function resolveChannels(
     return [customerOrdersChannel(principal.userId)];
   }
   if (principal.role === "delivery") {
-    return [deliveryOrdersChannel(principal.userId), DELIVERY_LOBBY_CHANNEL];
+    return [deliveryOrdersChannel(principal.userId)];
   }
   if (principal.role === "restaurant") {
     const restaurantId = typeof query.restaurant_id === "string" ? query.restaurant_id : undefined;

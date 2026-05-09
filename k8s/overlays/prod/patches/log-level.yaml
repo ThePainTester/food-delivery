@@ -25,3 +25,10 @@ metadata:
   name: payment-service-config
 data:
   LOG_LEVEL: warn
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dispatch-service-config
+data:
+  LOG_LEVEL: warn

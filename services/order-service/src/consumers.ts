@@ -23,6 +23,11 @@ interface PaymentFailedData {
   reason: string;
 }
 
+interface DeliveryAssignedData {
+  order_id: string;
+  delivery_user_id: string;
+}
+
 /** Race-safe insert: returns true if this event_id was already processed. */
 async function alreadyProcessed(pool: Pool, eventId: string): Promise<boolean> {
   const { rowCount } = await pool.query(
@@ -39,7 +44,7 @@ export async function startConsumers(
   service: OrdersService,
 ): Promise<void> {
   await rabbit.subscribe(
-    ["payment.pending", "payment.completed", "payment.failed"],
+    ["payment.pending", "payment.completed", "payment.failed", "delivery.assigned"],
     async (env: Envelope) => {
       if (await alreadyProcessed(pool, env.event_id)) {
         logger.debug({ event_id: env.event_id }, "duplicate event, skipped");
@@ -63,6 +68,16 @@ export async function startConsumers(
         await service.confirmDraft(d.order_id);
         await service.markPaid(d.order_id);
         logger.info({ order_id: d.order_id, payment_id: d.payment_id }, "order marked paid");
+        return;
+      }
+
+      if (env.event_type === "delivery.assigned") {
+        const d = env.data as DeliveryAssignedData;
+        await service.setDeliveryUser(d.order_id, d.delivery_user_id);
+        logger.info(
+          { order_id: d.order_id, delivery_user_id: d.delivery_user_id },
+          "delivery user persisted from dispatch",
+        );
         return;
       }
 

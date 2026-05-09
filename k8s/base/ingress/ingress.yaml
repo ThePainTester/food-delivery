@@ -65,6 +65,13 @@ spec:
                 port:
                   number: 8080
           - pathType: ImplementationSpecific
+            path: /api/(dispatch(?:/.*)?)
+            backend:
+              service:
+                name: dispatch-service
+                port:
+                  number: 8080
+          - pathType: ImplementationSpecific
             path: /(.*)
             backend:
               service:

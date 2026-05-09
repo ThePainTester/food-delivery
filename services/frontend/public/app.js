@@ -73,9 +73,14 @@ const API = {
   getOrder: (id) => api('GET', `/orders/${id}`),
   listOrders: (q) => api('GET', `/orders${q}`),
   setOrderStatus: (id, s) => api('PATCH', `/orders/${id}/status`, { status: s }),
-  assignOrder: (id) => api('POST', `/orders/${id}/assign`),
   postLocation: (id, b) => api('POST', `/orders/${id}/location`, b),
   getLocation: (id) => api('GET', `/orders/${id}/location`),
+
+  // dispatch-service
+  driverHeartbeat: (b) => api('POST', `/dispatch/drivers/heartbeat`, b),
+  driverOff: () => api('POST', `/dispatch/drivers/off`),
+  acceptOffer: (id) => api('POST', `/dispatch/assignments/${id}/accept`),
+  rejectOffer: (id) => api('POST', `/dispatch/assignments/${id}/reject`),
 };
 
 // ---------- DOM helpers -----------------------------------------------------
@@ -406,6 +411,23 @@ async function viewCustomerCheckout(orderId) {
     b.onclick = (e) => { e.preventDefault(); setMethod(b.dataset.method); };
   });
   setMethod('card');
+
+  // Auto-format MM/YY: insert "/" after the second digit, drop it when
+  // backspacing from "MM/" so the next press edits the month digit.
+  const expInput = document.querySelector('input[name="exp"]');
+  if (expInput) {
+    expInput.addEventListener('input', (e) => {
+      const isDelete = e.inputType && e.inputType.startsWith('delete');
+      const digits = expInput.value.replace(/\D/g, '').slice(0, 4);
+      if (digits.length >= 3) {
+        expInput.value = digits.slice(0, 2) + '/' + digits.slice(2);
+      } else if (digits.length === 2 && !isDelete) {
+        expInput.value = digits + '/';
+      } else {
+        expInput.value = digits;
+      }
+    });
+  }
 
   document.getElementById('pay').onsubmit = async (e) => {
     e.preventDefault();
@@ -832,25 +854,232 @@ async function viewRestaurantMenu() {
 
 // ---------- views: delivery -------------------------------------------------
 
+// Driver dashboard. Replaces the old self-claim lobby with the dispatch
+// service's push flow: rider goes Available → heartbeats every 8s →
+// receives offers via SSE → accepts/rejects → if accepted, the order shows
+// up in the active list (driver_id was set by order-service consuming
+// dispatch's delivery.assigned event).
+
+const DISPATCH_KEY = 'fd.dispatch.available';
+const DISPATCH_SIM_KEY = 'fd.dispatch.sim';
+const DISPATCH_SIM_LOC_KEY = 'fd.dispatch.simLocation';
+const DISPATCH_HEARTBEAT_MS = 8_000;
+
+let dispatchHeartbeatTimer = null;
+let dispatchStream = null;
+let dispatchGeoWatchId = null;
+let dispatchLastFix = null;
+
+function isDispatchAvailable() { return localStorage.getItem(DISPATCH_KEY) === '1'; }
+function setDispatchAvailable(v) {
+  if (v) localStorage.setItem(DISPATCH_KEY, '1');
+  else localStorage.removeItem(DISPATCH_KEY);
+}
+function isDispatchSim() { return localStorage.getItem(DISPATCH_SIM_KEY) === '1'; }
+function setDispatchSim(v) {
+  if (v) localStorage.setItem(DISPATCH_SIM_KEY, '1');
+  else localStorage.removeItem(DISPATCH_SIM_KEY);
+}
+function getSimLocation() {
+  try { return JSON.parse(localStorage.getItem(DISPATCH_SIM_LOC_KEY) || 'null'); }
+  catch { return null; }
+}
+function setSimLocation(loc) {
+  if (loc) localStorage.setItem(DISPATCH_SIM_LOC_KEY, JSON.stringify(loc));
+  else localStorage.removeItem(DISPATCH_SIM_LOC_KEY);
+}
+
+async function postHeartbeat() {
+  const fix = isDispatchSim()
+    ? getSimLocation()
+    : (dispatchLastFix ? { lat: dispatchLastFix.lat, lon: dispatchLastFix.lon } : null);
+  if (!fix) return;
+  try { await API.driverHeartbeat(fix); } catch (err) { console.warn('heartbeat failed', err); }
+}
+
+function startDispatchPresence() {
+  stopDispatchPresence();
+  if (isDispatchSim()) {
+    if (!getSimLocation()) {
+      flash('Pick your location on the map first.');
+      return;
+    }
+    dispatchHeartbeatTimer = setInterval(postHeartbeat, DISPATCH_HEARTBEAT_MS);
+    postHeartbeat();
+  } else {
+    if (!navigator.geolocation) {
+      flash('Geolocation not supported. Switch to simulated mode.');
+      return;
+    }
+    dispatchGeoWatchId = navigator.geolocation.watchPosition(
+      (p) => { dispatchLastFix = { lat: p.coords.latitude, lon: p.coords.longitude }; },
+      (err) => console.warn('geolocation error', err),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
+    );
+    dispatchHeartbeatTimer = setInterval(postHeartbeat, DISPATCH_HEARTBEAT_MS);
+  }
+  openDispatchStream();
+}
+
+function stopDispatchPresence() {
+  if (dispatchHeartbeatTimer) { clearInterval(dispatchHeartbeatTimer); dispatchHeartbeatTimer = null; }
+  if (dispatchGeoWatchId != null) {
+    try { navigator.geolocation.clearWatch(dispatchGeoWatchId); } catch { /* ignore */ }
+    dispatchGeoWatchId = null;
+  }
+  dispatchLastFix = null;
+  closeDispatchStream();
+}
+
+// SSE for offer events. Server pushes {orderId, driverId, pickup,
+// expires_in_s} when this driver wins the loop's current iteration.
+function openDispatchStream() {
+  closeDispatchStream();
+  const token = encodeURIComponent(getToken() || '');
+  dispatchStream = new EventSource(`/api/dispatch/drivers/stream?token=${token}`);
+  dispatchStream.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      if (data.type === 'cancelled') {
+        closeOfferModal();
+        return;
+      }
+      if (data.orderId && data.expires_in_s) {
+        showOfferModal(data);
+      }
+    } catch { /* ignore malformed */ }
+  };
+}
+
+function closeDispatchStream() {
+  if (dispatchStream) { dispatchStream.close(); dispatchStream = null; }
+  closeOfferModal();
+}
+
+let offerModalEl = null;
+let offerCountdown = null;
+function closeOfferModal() {
+  if (offerCountdown) { clearInterval(offerCountdown); offerCountdown = null; }
+  if (offerModalEl) { offerModalEl.remove(); offerModalEl = null; }
+}
+
+function showOfferModal({ orderId, expires_in_s, pickup }) {
+  closeOfferModal();
+  let remaining = expires_in_s;
+  offerModalEl = el(`
+    <div class="fixed inset-0 bg-black/50 flex items-center justify-center" style="z-index: 1000;">
+      <div class="bg-white rounded shadow-lg p-5 w-80">
+        <h2 class="text-lg font-semibold mb-1">New delivery offer</h2>
+        <p class="text-sm text-slate-600">Order ${orderId.slice(0, 8)}…</p>
+        ${pickup ? `<p class="text-xs text-slate-500 mt-1">Pickup: ${pickup.lat.toFixed(4)}, ${pickup.lon.toFixed(4)}</p>` : ''}
+        <div class="mt-3 h-2 bg-slate-200 rounded overflow-hidden">
+          <div id="offer-bar" class="h-full bg-emerald-500 transition-all" style="width: 100%"></div>
+        </div>
+        <p id="offer-countdown" class="text-xs text-slate-500 mt-1">${remaining}s left</p>
+        <div class="mt-4 flex gap-2">
+          <button id="offer-reject" class="flex-1 bg-slate-200 text-slate-800 px-3 py-2 rounded text-sm">Reject</button>
+          <button id="offer-accept" class="flex-1 bg-emerald-600 text-white px-3 py-2 rounded text-sm">Accept</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(offerModalEl);
+  const bar = offerModalEl.querySelector('#offer-bar');
+  const cd = offerModalEl.querySelector('#offer-countdown');
+  offerCountdown = setInterval(() => {
+    remaining -= 1;
+    if (bar) bar.style.width = `${Math.max(0, (remaining / expires_in_s) * 100)}%`;
+    if (cd) cd.textContent = `${Math.max(0, remaining)}s left`;
+    if (remaining <= 0) { closeOfferModal(); }
+  }, 1000);
+  offerModalEl.querySelector('#offer-accept').onclick = async () => {
+    try {
+      await API.acceptOffer(orderId);
+      closeOfferModal();
+      // Going Off-duty so we don't get more offers while delivering.
+      setDispatchAvailable(false);
+      stopDispatchPresence();
+      flash('Order accepted', 'ok');
+      location.hash = `#/d/orders/${orderId}`;
+    } catch (err) {
+      closeOfferModal();
+      flash(err.message);
+    }
+  };
+  offerModalEl.querySelector('#offer-reject').onclick = async () => {
+    try { await API.rejectOffer(orderId); } catch { /* best effort */ }
+    closeOfferModal();
+  };
+}
+
 async function viewDeliveryOrders() {
   const u = currentUser();
+  const available = isDispatchAvailable();
+  const sim = isDispatchSim();
+  const simLoc = getSimLocation();
   render(el(`<section>
     <h1 class="text-xl font-semibold mb-2">Deliveries</h1>
-    <div class="bg-white p-3 rounded shadow mb-4 flex gap-2">
-      <input id="claim" placeholder="Order ID to claim (READY)" class="flex-1 border rounded px-2 py-1 text-sm" />
-      <button id="claim-btn" class="bg-emerald-600 text-white px-3 py-1 rounded text-sm">Claim</button>
+    <div class="bg-white p-3 rounded shadow mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <span id="presence-pill" class="text-xs px-2 py-1 rounded ${available ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-700'}">${available ? 'Available' : 'Off-duty'}</span>
+          <button id="presence-toggle" class="text-sm px-3 py-1 rounded ${available ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 text-white'}">
+            ${available ? 'Go Off-duty' : 'Go Available'}
+          </button>
+        </div>
+        <label class="text-xs text-slate-600 flex items-center gap-1">
+          <input id="sim-toggle" type="checkbox" ${sim ? 'checked' : ''}/> Simulated GPS (demo)
+        </label>
+      </div>
+      <p class="text-xs text-slate-500">Available drivers receive delivery offers from dispatch. Accept to start a trip.</p>
+      ${sim ? `
+        <div class="mt-3">
+          <p class="text-xs text-slate-600 mb-1">Click the map to set your simulated location.</p>
+          <div id="sim-map" class="h-56 rounded border"></div>
+          <p id="sim-coords" class="text-xs text-slate-500 mt-1">${simLoc ? `Picked: ${simLoc.lat.toFixed(5)}, ${simLoc.lon.toFixed(5)}` : 'No location picked yet.'}</p>
+        </div>` : ''}
     </div>
+    <h2 class="text-sm font-semibold text-slate-600 mb-2">Active deliveries</h2>
     <div id="list" class="space-y-2"></div>
   </section>`));
-  document.getElementById('claim-btn').onclick = async () => {
-    const id = document.getElementById('claim').value.trim();
-    if (!id) return;
-    try {
-      await API.assignOrder(id);
-      flash('Claimed', 'ok');
-      location.hash = `#/d/orders/${id}`;
-    } catch (err) { flash(err.message); }
+
+  if (sim) {
+    pickerMap('sim-map', simLoc ? [simLoc.lat, simLoc.lon] : null, ({ lat, lng }) => {
+      const loc = { lat, lon: lng };
+      setSimLocation(loc);
+      const c = document.getElementById('sim-coords');
+      if (c) c.textContent = `Picked: ${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)}`;
+      // Push the new fix immediately so dispatch sees it without waiting
+      // for the next interval tick.
+      if (isDispatchAvailable()) postHeartbeat();
+    });
+  }
+
+  document.getElementById('sim-toggle').onchange = async (e) => {
+    setDispatchSim(e.target.checked);
+    if (isDispatchAvailable()) {
+      stopDispatchPresence();
+      try { await API.driverOff(); } catch { /* best effort */ }
+      setDispatchAvailable(false);
+    }
+    viewDeliveryOrders();
   };
+
+  document.getElementById('presence-toggle').onclick = async () => {
+    if (isDispatchAvailable()) {
+      setDispatchAvailable(false);
+      stopDispatchPresence();
+      try { await API.driverOff(); } catch { /* best effort */ }
+    } else {
+      if (isDispatchSim() && !getSimLocation()) {
+        flash('Pick your location on the map first.');
+        return;
+      }
+      setDispatchAvailable(true);
+      startDispatchPresence();
+    }
+    viewDeliveryOrders();
+  };
+
   const refresh = async () => {
     const list = await API.listOrders(`?delivery_user_id=${u.id}`);
     const target = document.getElementById('list');
@@ -869,6 +1098,12 @@ async function viewDeliveryOrders() {
   };
   try { await refresh(); } catch (err) { flash(err.message); }
   openOrdersStream({}, refresh);
+
+  // If the driver toggled Available previously and reloaded the page, restart
+  // the heartbeat + SSE on entering this view.
+  if (available && !dispatchHeartbeatTimer) {
+    startDispatchPresence();
+  }
 }
 
 let geoWatchId = null;

@@ -29,11 +29,19 @@ services:
     restart: always
     logging: *logging
 
+  dispatch-db:
+    restart: always
+    logging: *logging
+
   restaurants-db:
     restart: always
     logging: *logging
 
   orders-cache:
+    restart: always
+    logging: *logging
+
+  dispatch-cache:
     restart: always
     logging: *logging
 
@@ -59,6 +67,11 @@ services:
 
   payment-service:
     image: ${REGISTRY}/payment-service:${IMAGE_TAG}
+    restart: always
+    logging: *logging
+
+  dispatch-service:
+    image: ${REGISTRY}/dispatch-service:${IMAGE_TAG}
     restart: always
     logging: *logging
 

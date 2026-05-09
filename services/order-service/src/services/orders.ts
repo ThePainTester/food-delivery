@@ -8,7 +8,6 @@ import { logger } from "../logger";
 import { minorToDecimal, decimalToMinor } from "../money";
 import { Rabbit } from "../rabbit";
 import {
-  DELIVERY_LOBBY_CHANNEL,
   customerOrdersChannel,
   deliveryOrdersChannel,
   restaurantOrdersChannel,
@@ -58,9 +57,7 @@ export class OrdersService {
   // Fan out a small "order changed" envelope to every Redis Pub/Sub channel
   // whose connected SSE clients should care. Customers always care about
   // their own orders; the restaurant always cares about its orders; the
-  // assigned rider (when present) cares about their orders. `delivery.lobby`
-  // is the global rider list channel — every rider on the lobby view sees
-  // ready orders appear and disappear via this.
+  // assigned rider (when present) cares about their orders.
   //
   // Best effort — a failed publish should not roll back the persisted state
   // change. Worst case the user's UI stays stale until their next manual
@@ -75,22 +72,10 @@ export class OrdersService {
       updated_at: new Date().toISOString(),
     });
     const targets = new Set<string>([customerOrdersChannel(order.customer_id)]);
-    // DRAFT orders are still in checkout — restaurants and riders should
-    // not learn about them yet. Once confirmDraft fires, the next event
-    // is published with status=PENDING and the restaurant SSE picks it up.
     if (order.status !== "DRAFT") {
       targets.add(restaurantOrdersChannel(order.restaurant_id));
       if (order.delivery_user_id) {
         targets.add(deliveryOrdersChannel(order.delivery_user_id));
-      }
-      // The lobby reflects what's claimable / has been claimed. Any of these
-      // events changes the lobby's view, so push to it.
-      if (
-        eventType === "order.ready" ||
-        eventType === "delivery.assigned" ||
-        eventType === "order.cancelled"
-      ) {
-        targets.add(DELIVERY_LOBBY_CHANNEL);
       }
     }
     try {
@@ -267,14 +252,29 @@ export class OrdersService {
 
     const now = new Date().toISOString();
     switch (target) {
-      case "ACCEPTED":
+      case "ACCEPTED": {
+        // Pickup location is required by dispatch-service. Best-effort —
+        // restaurants without lat/lon yield a null pickup_location and the
+        // dispatch consumer logs+skips, surfacing data-quality issues
+        // without blocking the user-visible status transition.
+        let pickup: { lat: number; lon: number } | null = null;
+        try {
+          const r = await this.restaurants.getRestaurant(updated.restaurant_id);
+          if (r.latitude !== null && r.longitude !== null) {
+            pickup = { lat: r.latitude, lon: r.longitude };
+          }
+        } catch (err) {
+          logger.warn({ err, restaurant_id: updated.restaurant_id }, "pickup lookup failed");
+        }
         await this.rabbit.publish("order.accepted", {
           order_id: updated.id,
           customer_id: updated.customer_id,
           restaurant_id: updated.restaurant_id,
           accepted_at: now,
+          pickup_location: pickup,
         });
         break;
+      }
       case "REJECTED":
         await this.rabbit.publish("order.rejected", {
           order_id: updated.id,
@@ -322,20 +322,16 @@ export class OrdersService {
     return updated;
   }
 
-  async assignDelivery(orderId: string, deliveryUserId: string): Promise<OrderRow> {
-    const claimed = await this.repo.claimDelivery(orderId, deliveryUserId);
-    if (!claimed) {
-      const o = await this.repo.findById(orderId);
-      if (!o) throw notFound("order not found");
-      throw conflict("order not available for assignment");
+  // Persist a driver assignment originating from dispatch-service's
+  // delivery.assigned event. Idempotent — a duplicate publish (allowed by
+  // the dispatch design) is a no-op.
+  async setDeliveryUser(orderId: string, deliveryUserId: string): Promise<void> {
+    const updated = await this.repo.setDeliveryUser(orderId, deliveryUserId);
+    if (!updated) {
+      logger.warn({ orderId }, "setDeliveryUser: order not found");
+      return;
     }
-    await this.rabbit.publish("delivery.assigned", {
-      order_id: claimed.id,
-      delivery_user_id: claimed.delivery_user_id!,
-      assigned_at: new Date().toISOString(),
-    });
-    await this.fanoutOrder("delivery.assigned", claimed);
-    return claimed;
+    await this.fanoutOrder("delivery.assigned", updated);
   }
 
   async markPaid(orderId: string): Promise<void> {

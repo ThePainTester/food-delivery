@@ -19,7 +19,10 @@ spec:
           beats { port => 5044 }
         }
         filter {
-          # Filebeat already attaches kubernetes.* metadata (namespace, pod, labels).
+          # Drop anything outside the food-delivery-* namespaces.
+          if [kubernetes][namespace] !~ /^food-delivery-/ {
+            drop { }
+          }
           # Promote the namespace into a top-level `env` (food-delivery-dev → dev).
           if [kubernetes][namespace] {
             grok {
@@ -75,5 +78,5 @@ spec:
           resources:
             # Logstash buffers in-memory when ES briefly rejects writes
             # (e.g. rolling restart); 2Gi gives headroom for retry spikes.
-            requests: { cpu: 100m, memory: 1Gi }
-            limits:   { memory: 2Gi }
+            requests: {cpu: 100m, memory: 1Gi}
+            limits: {memory: 2Gi}

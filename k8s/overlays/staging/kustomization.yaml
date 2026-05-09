@@ -20,6 +20,9 @@ images:
   - name: food-delivery/payment-service
     newName: ghcr.io/thepaintester/payment-service
     newTag: v2.0.0
+  - name: food-delivery/dispatch-service
+    newName: ghcr.io/thepaintester/dispatch-service
+    newTag: v0.1.0
   - name: food-delivery/frontend
     newName: ghcr.io/thepaintester/frontend
     newTag: v1.2.0

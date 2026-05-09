@@ -1,14 +1,14 @@
 # Food Delivery Platform
 
-A polyglot microservices food-delivery system built around four backend services
-(User, Restaurant, Order, Payment), a static SPA frontend, RabbitMQ as the
-event bus, per-service datastores, and a full three-pillar observability
+A polyglot microservices food-delivery system built around five backend services
+(User, Restaurant, Order, Payment, Dispatch), a static SPA frontend, RabbitMQ as
+the event bus, per-service datastores, and a full three-pillar observability
 stack. The same code targets local Docker Compose for everyday iteration and
 Minikube + Kustomize for the Kubernetes story. The platform serves three user
 roles end-to-end: **customers** (browse restaurants, place and pay for
 orders), **restaurant owners** (publish menus, accept/prepare orders), and
-**delivery riders** (claim ready orders, push live location, mark
-delivered).
+**delivery riders** (go available, accept push offers from dispatch, push
+live location, mark delivered).
 
 ## Architecture
 
@@ -34,15 +34,19 @@ flowchart LR
   ingress --> rs["Restaurant Service<br/>(Python)"]
   ingress --> os["Order Service<br/>(Node/TS)"]
   ingress --> ps["Payment Service<br/>(Go)"]
+  ingress --> ds["Dispatch Service<br/>(Node/TS)"]
 
   us --> usdb[("users-db<br/>Postgres")]
   rs --> rsdb[("restaurants-db<br/>MongoDB")]
   os --> osdb[("orders-db<br/>Postgres")]
   os --> cache[("orders-cache<br/>Redis")]
   ps --> psdb[("payments-db<br/>Postgres")]
+  ds --> dsdb[("dispatch-db<br/>Postgres")]
+  ds --> dscache[("dispatch-cache<br/>Redis")]
 
   os <-->|publish/consume| rabbit["RabbitMQ<br/>(food_delivery topic exchange)"]
   ps <-->|publish/consume| rabbit
+  ds <-->|publish/consume| rabbit
 
   subgraph obs ["observability namespace"]
     prom["Prometheus"]
@@ -54,7 +58,7 @@ flowchart LR
   end
 
   us & rs & os & ps & fe -. metrics .-> prom
-  us & rs & os & ps & fe -. stdout logs .-> es
+  us & rs & os & ps & ds & fe -. stdout logs .-> es
   us & rs & os & ps -. OTLP traces .-> otel --> tempo
   prom --> graf
   tempo --> graf
@@ -99,9 +103,9 @@ sequenceDiagram
   participant MQ as RabbitMQ
   participant C as Customer (SPA)
 
-  Note over OS,MQ: Order is READY (restaurant ready, no rider yet)
-  R->>OS: POST /orders/{id}/assign (self-claim)
-  OS->>MQ: publish delivery.assigned
+  Note over OS,MQ: Order is ACCEPTED → dispatch-service ran the offer loop
+  Note over OS,MQ: → driver accepted → orders.driver_id is set
+  Note over OS,MQ: Once order reaches READY, the assigned rider can pick up.
   C->>OS: GET /orders/{id}/location/stream (SSE)
   OS->>Redis: GET order:{id}:location
   OS-->>C: SSE event {lat, lng, updated_at}
@@ -173,7 +177,7 @@ stateDiagram-v2
   ACCEPTED --> CANCELLED: restaurant
   PREPARING --> READY: restaurant
   PREPARING --> CANCELLED: restaurant
-  READY --> PICKED_UP: rider (after self-claim)
+  READY --> PICKED_UP: rider (assigned by dispatch-service)
   READY --> CANCELLED: restaurant
   PICKED_UP --> DELIVERED: rider
   DELIVERED --> [*]
@@ -191,9 +195,11 @@ stateDiagram-v2
   system on `payment.failed`, or the restaurant up through READY.
 
 Publishes `order.placed` (on `DRAFT → PENDING`, not on draft creation),
-`order.accepted`, `order.rejected`, `order.ready`, `order.picked_up`,
-`order.delivered`, `order.cancelled`, `delivery.assigned`. Consumes
-`payment.pending`, `payment.completed`, `payment.failed`.
+`order.accepted` (with `pickup_location`), `order.rejected`,
+`order.ready`, `order.picked_up`, `order.delivered`, `order.cancelled`.
+Consumes `payment.pending`, `payment.completed`, `payment.failed`,
+`delivery.assigned` (writes `orders.driver_id` and fans out — the publish
+itself comes from dispatch-service).
 
 ### Payment Service
 
@@ -220,6 +226,57 @@ Publishes `payment.pending` (cash created), `payment.completed`
 (card success or cash collected), `payment.failed` (card declined).
 Consumes `order.rejected`, `order.cancelled` (refund hook — currently
 a no-op log line).
+
+### Dispatch Service
+
+Node 20 / TypeScript (Express) on Postgres + Redis. Push-based driver
+assignment. Replaces the previous self-claim lobby. Triggered by
+`order.accepted`; runs an offer loop that finds nearby available
+drivers, ranks them by distance, and offers the order to one driver at
+a time with a 12 s window. Postgres `assignments.order_id PK` is the
+sole authority for who owns an order — concurrent `accept` calls race
+on `INSERT … ON CONFLICT DO NOTHING`, exactly one wins.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant OS as Order Service
+  participant MQ as RabbitMQ
+  participant DS as Dispatch Service
+  participant Redis as dispatch-cache (Redis)
+  participant R as Rider (SPA)
+
+  OS->>MQ: publish order.accepted (with pickup_location)
+  MQ-->>DS: order.accepted (any replica via competing-consumer queue)
+  DS->>Redis: SET dispatch:lock:{orderId} NX EX 60
+  DS->>Redis: GEOSEARCH drivers:available BYRADIUS pickup 3km
+  DS->>Redis: HMGET driver:{id} (filter stale / not available)
+  loop each ranked driver, ≤12s window
+    DS->>Redis: SADD order:{orderId}:offered_drivers driver
+    DS->>Redis: PUBLISH dispatch.offers {driverId, orderId, pickup}
+    Redis-->>DS: every replica receives; only the one with this<br/>driver's SSE delivers
+    DS-->>R: SSE offer event → modal pops
+    alt rider accepts
+      R->>DS: POST /assignments/{orderId}/accept
+      DS->>DS: INSERT assignments ON CONFLICT DO NOTHING
+      DS->>Redis: ZREM drivers:available, HSET available=false
+      DS->>MQ: publish delivery.assigned
+      DS->>Redis: PUBLISH dispatch.responses:{orderId} accepted
+      MQ-->>OS: delivery.assigned → orders.driver_id set
+    else timeout / reject
+      DS->>Redis: PUBLISH dispatch.responses:{orderId} rejected
+      Note over DS: continue to next driver
+    end
+  end
+```
+
+Publishes `delivery.assigned`, optionally `dispatch.no_drivers`.
+Consumes `order.accepted`, `order.cancelled` (broadcasts a global
+cancel on `dispatch.responses:{orderId}` so any in-flight loop on any
+pod aborts immediately and the rider's modal closes).
+
+Horizontally scalable from day one — see [services/dispatch-service/README.md](services/dispatch-service/README.md)
+for the Redis surface, lock semantics, and known v1 limitations.
 
 ### Frontend
 
@@ -256,16 +313,17 @@ uses Traefik as the gateway instead.
 
 ## Real-time Updates (SSE + Redis Pub/Sub)
 
-The SPA never polls for live data. Instead the order-service exposes
-two **Server-Sent Event** streams that push updates to the browser as
-they happen, fed internally by **Redis Pub/Sub**.
+The SPA never polls for live data. Instead the backend services expose
+**Server-Sent Event** streams that push updates to the browser as they
+happen, fed internally by **Redis Pub/Sub**.
 
 ### Streams
 
 | Endpoint | Used by | Pushes |
 |---|---|---|
 | `GET /orders/{id}/location/stream` | Customer's live-tracking map | Driver location fixes for one order |
-| `GET /orders/stream` | Customer order list / order detail / restaurant orders / rider lobby + active deliveries | Order-state changes (`order.placed`, `order.accepted`, `order.ready`, `delivery.assigned`, `order.picked_up`, `order.delivered`, `order.cancelled`, `order.paid`) |
+| `GET /orders/stream` | Customer order list / order detail / restaurant orders / rider's active deliveries | Order-state changes (`order.placed`, `order.accepted`, `order.ready`, `delivery.assigned`, `order.picked_up`, `order.delivered`, `order.cancelled`, `order.paid`) |
+| `GET /dispatch/drivers/stream` | Driver dashboard | Push offers (`{driverId, orderId, pickup, expires_in_s}`) and cancellations (`{type: cancelled}`) |
 
 Both routes set SSE headers (`Content-Type: text/event-stream`,
 `Cache-Control: no-cache`, `X-Accel-Buffering: no`) and write a `:hb`
@@ -290,8 +348,12 @@ small envelope to one or more Redis channels keyed by recipient:
 customer:<userId>:orders          # this customer's orders changed
 restaurant:<restaurantId>:orders  # this restaurant's orders changed
 delivery:<userId>:orders          # this rider's deliveries changed
-delivery:lobby                    # global rider list of READY/claim events
 order:<orderId>:location:stream   # one driver-location fix
+
+# dispatch-service uses Redis Pub/Sub the same way
+dispatch.offers                   # broadcast offer fan-in (per-pod filter)
+dispatch.responses:<orderId>      # accept/reject signal back to the loop
+driver:<driverId>:offers          # local SSE channel (per pod)
 ```
 
 Why a separate channel per recipient instead of a single firehose: the
@@ -362,6 +424,7 @@ food-delivery/
 │   ├── restaurant-service/      # Python + FastAPI + MongoDB
 │   ├── order-service/           # Node/TS + Express + Postgres + Redis
 │   ├── payment-service/         # Go + Gin + Postgres
+│   ├── dispatch-service/        # Node/TS + Express + Postgres + Redis
 │   └── frontend/                # NGINX serving a static SPA
 ├── compose/                     # Docker Compose stack
 │   ├── docker-compose.yml       # base topology
@@ -454,7 +517,7 @@ echo "$CR_PAT" | docker login ghcr.io -u <github-username> --password-stdin
 ./scripts/publish.sh <service> <version>
 
 # Publish all services at one version
-for s in user-service restaurant-service order-service payment-service frontend; do
+for s in user-service restaurant-service order-service payment-service dispatch-service frontend; do
   ./scripts/publish.sh "$s" v1.0.0
 done
 ```
@@ -572,7 +635,7 @@ namespace and `newTag` is the version you pushed:
 
 ```bash
 cd k8s/overlays/staging   # or prod
-for s in user-service restaurant-service order-service payment-service frontend; do
+for s in user-service restaurant-service order-service payment-service dispatch-service frontend; do
   kustomize edit set image food-delivery/$s=ghcr.io/<owner>/$s:v1.0.0
 done
 ```

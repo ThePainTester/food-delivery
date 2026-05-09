@@ -8,14 +8,17 @@ resources:
   - infra/postgres-user
   - infra/postgres-order
   - infra/postgres-payment
-  - infra/mongodb
-  - infra/redis
+  - infra/postgres-dispatch
+  - infra/mongodb-restaurant
+  - infra/redis-order
+  - infra/redis-dispatch
   - infra/rabbitmq
 
   - apps/user-service
   - apps/restaurant-service
   - apps/order-service
   - apps/payment-service
+  - apps/dispatch-service
   - apps/frontend
 
   - ingress
