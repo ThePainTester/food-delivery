@@ -28,7 +28,7 @@ ConfigMap.
 
 ```mermaid
 flowchart LR
-  user(["User<br/>(browser)"]) --> ing["Ingress NGINX"]
+  user(["User<br/>(browser)"]) --> ing["Ingress"]
 
   ing --> fe["Frontend<br/>(NGINX + SPA)"]
   ing --> us["User Service<br/>(Go)"]
