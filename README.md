@@ -103,18 +103,18 @@ sequenceDiagram
   R->>OS: POST /orders/{id}/assign (self-claim)
   OS->>MQ: publish delivery.assigned
   C->>OS: GET /orders/{id}/location/stream (SSE)
-  OS->>Redis: GET order:{id}:loc (initial snapshot, if any)
-  OS-->>C: data: {lat, lng, updated_at}
-  OS->>Redis: SUBSCRIBE order:{id}:loc:stream
-  Note over R,C: Driver pushes via plain HTTP every 5s; server fans out<br/>each fix to the customer's open SSE stream via Redis Pub/Sub.
+  OS->>Redis: GET order:{id}:location
+  OS-->>C: SSE event {lat, lng, updated_at}
+  OS->>Redis: SUBSCRIBE order:{id}:location:stream
+  Note over R,C: Driver pushes via plain HTTP every 5s; server fans out each fix to the customer SSE stream via Redis Pub/Sub.
   loop every 5s while in transit
     R->>OS: POST /orders/{id}/location {lat, lng}
-    OS->>Redis: SETEX order:{id}:loc TTL=120s
-    OS->>Redis: PUBLISH order:{id}:loc:stream {lat, lng, updated_at}
+    OS->>Redis: SETEX order:{id}:location TTL=120s
+    OS->>Redis: PUBLISH order:{id}:location:stream
     Redis-->>OS: deliver to subscriber
-    OS-->>C: data: {lat, lng, updated_at}
+    OS-->>C: SSE event {lat, lng, updated_at}
   end
-  R->>OS: PATCH /orders/{id}/status PICKED_UP → DELIVERED
+  R->>OS: PATCH /orders/{id}/status PICKED_UP to DELIVERED
   OS->>MQ: publish order.picked_up, order.delivered
 ```
 
