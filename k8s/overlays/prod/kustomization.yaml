@@ -16,16 +16,16 @@ images:
     newTag: v1.1.0
   - name: food-delivery/order-service
     newName: ghcr.io/thepaintester/order-service
-    newTag: v2.0.0
+    newTag: v3.0.0
   - name: food-delivery/payment-service
     newName: ghcr.io/thepaintester/payment-service
     newTag: v2.0.0
   - name: food-delivery/dispatch-service
     newName: ghcr.io/thepaintester/dispatch-service
-    newTag: v0.1.0
+    newTag: v1.0.0
   - name: food-delivery/frontend
     newName: ghcr.io/thepaintester/frontend
-    newTag: v1.2.0
+    newTag: v1.3.0
 
 # Replicas: 2 for stateless backends + frontend; stateful infra stays at 1
 # (a single Postgres/Mongo/Rabbit per env is intentional — replication is
