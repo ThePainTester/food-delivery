@@ -296,19 +296,21 @@ uses Traefik as the gateway instead.
 
 ## Real-time Updates (SSE + Redis Pub/Sub)
 
-The SPA never polls for live data. Instead the backend services expose
-**Server-Sent Event** streams that push updates to the browser as they
-happen, fed internally by **Redis Pub/Sub**.
+The SPA never polls for live data. Instead, services that own real-time
+state expose **Server-Sent Event** streams that push updates to the
+browser as they happen, fed internally by **Redis Pub/Sub**. Today
+order-service and dispatch-service both follow the same pattern; any
+new service can adopt it with the shared `ChannelStreamHub` primitive.
 
 ### Streams
 
-| Endpoint | Used by | Pushes |
-|---|---|---|
-| `GET /orders/{id}/location/stream` | Customer's live-tracking map | Driver location fixes for one order |
-| `GET /orders/stream` | Customer order list / order detail / restaurant orders / rider's active deliveries | Order-state changes (`order.placed`, `order.accepted`, `order.ready`, `delivery.assigned`, `order.picked_up`, `order.delivered`, `order.cancelled`, `order.paid`) |
-| `GET /dispatch/drivers/stream` | Driver dashboard | Push offers (`{driverId, orderId, pickup, expires_in_s}`) and cancellations (`{type: cancelled}`) |
+| Service | Endpoint | Used by | Pushes |
+|---|---|---|---|
+| order-service | `GET /orders/stream` | Customer order list / order detail / restaurant orders / rider's active deliveries | Order-state changes (`order.placed`, `order.accepted`, `order.ready`, `delivery.assigned`, `order.picked_up`, `order.delivered`, `order.cancelled`, `order.paid`) |
+| order-service | `GET /orders/{id}/location/stream` | Customer's live-tracking map | Driver location fixes for one order |
+| dispatch-service | `GET /dispatch/drivers/stream` | Driver dashboard | Push offers (`{driverId, orderId, pickup, expires_in_s}`) and cancellations (`{type: cancelled}`) |
 
-Both routes set SSE headers (`Content-Type: text/event-stream`,
+All SSE routes set the same headers (`Content-Type: text/event-stream`,
 `Cache-Control: no-cache`, `X-Accel-Buffering: no`) and write a `:hb`
 heartbeat every 25 s so idle proxies don't close the connection. The
 nginx Ingress is annotated with `proxy-buffering: off` and a 1 h
@@ -322,21 +324,23 @@ present).
 
 ### Redis Pub/Sub as the fan-out bus
 
-Whenever the order-service mutates an order (creates one, transitions
-its status, marks it paid, accepts a delivery claim) it both publishes
-the existing RabbitMQ event for other services **and** publishes a
-small envelope to one or more Redis channels keyed by recipient:
+Whenever a producing service mutates state worth showing live (an
+order transitions, a driver location ping arrives, dispatch offers an
+order to a rider) it `PUBLISH`es a small envelope to one or more Redis
+channels keyed by recipient. Channels are namespaced per producer so
+there's no collision risk between services:
 
 ```
+# order-service channels
 customer:<userId>:orders          # this customer's orders changed
 restaurant:<restaurantId>:orders  # this restaurant's orders changed
 delivery:<userId>:orders          # this rider's deliveries changed
 order:<orderId>:location:stream   # one driver-location fix
 
-# dispatch-service uses Redis Pub/Sub the same way
+# dispatch-service channels
 dispatch.offers                   # broadcast offer fan-in (per-pod filter)
 dispatch.responses:<orderId>      # accept/reject signal back to the loop
-driver:<driverId>:offers          # local SSE channel (per pod)
+driver:<driverId>:offers          # local SSE channel for one driver
 ```
 
 Why a separate channel per recipient instead of a single firehose: the
@@ -344,10 +348,12 @@ SSE handler's auth has already pinned down *who* the connected client
 is, so it subscribes only to channels relevant to that principal. No
 cross-tenant leakage, no client-side filtering of unrelated events.
 
-The driver's location `POST` writes to Redis (`SETEX`) so latecomers
-get a snapshot, then `PUBLISH`es so any open SSE subscriber gets the
-fix immediately. Order-state mutations skip the `SETEX` — Postgres is
-the source of truth and the SPA refetches when an event arrives.
+Two slightly different write patterns are used depending on whether
+clients need a snapshot. Driver-location `POST`s `SETEX` first (so a
+late SSE subscriber gets the last known fix immediately) and then
+`PUBLISH`. Order-state mutations and dispatch offers skip the `SETEX`
+— Postgres is the source of truth, and the SPA refetches when an event
+arrives.
 
 ### Connection-budget control: in-process fan-out hub
 
@@ -358,7 +364,8 @@ bottleneck.
 
 Instead each pod runs a single **`ChannelStreamHub`** that holds **one
 Redis subscriber connection** for the lifetime of the process and
-fans messages out to in-process listeners:
+fans messages out to in-process listeners. The same class is reused
+verbatim by order-service and dispatch-service:
 
 ```mermaid
 flowchart TD
@@ -394,9 +401,11 @@ by how many tabs are open:
 Across pods the bus stays the same — Redis Pub/Sub broadcasts each
 message to every subscribed pod, which then fans out to its own
 locally-connected SSE clients. There's no sticky-session requirement
-on the Ingress: a customer can be load-balanced to any order-service
+on the Ingress: a customer (or rider) can be load-balanced to any
 replica and still receive their events, because every replica's hub
-subscribes to the same recipient channels on demand.
+subscribes to the same recipient channels on demand. This is what lets
+both order-service and dispatch-service scale horizontally without
+session affinity.
 
 ## Project Structure
 
