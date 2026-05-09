@@ -149,7 +149,7 @@ services:
   # --- application services ----------------------------------------------------
 
   user-service:
-    image: ${REGISTRY:-food-delivery}/user-service:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-food-delivery}/user-service:${USER_SERVICE_TAG:-${IMAGE_TAG:-latest}}
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://${USERS_DB_USER}:${USERS_DB_PASSWORD}@users-db:5432/users?sslmode=disable
@@ -173,7 +173,7 @@ services:
       - "traefik.http.services.user.loadbalancer.server.port=8080"
 
   restaurant-service:
-    image: ${REGISTRY:-food-delivery}/restaurant-service:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-food-delivery}/restaurant-service:${RESTAURANT_SERVICE_TAG:-${IMAGE_TAG:-latest}}
     environment:
       PORT: "8080"
       MONGO_URL: mongodb://${RESTAURANTS_DB_USER}:${RESTAURANTS_DB_PASSWORD}@restaurants-db:27017/${RESTAURANTS_DB_NAME:-restaurants}?authSource=admin
@@ -201,7 +201,7 @@ services:
       - "traefik.http.services.restaurant.loadbalancer.server.port=8080"
 
   order-service:
-    image: ${REGISTRY:-food-delivery}/order-service:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-food-delivery}/order-service:${ORDER_SERVICE_TAG:-${IMAGE_TAG:-latest}}
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://${ORDERS_DB_USER}:${ORDERS_DB_PASSWORD}@orders-db:5432/orders?sslmode=disable
@@ -235,7 +235,7 @@ services:
       - "traefik.http.services.order.loadbalancer.server.port=8080"
 
   dispatch-service:
-    image: ${REGISTRY:-food-delivery}/dispatch-service:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-food-delivery}/dispatch-service:${DISPATCH_SERVICE_TAG:-${IMAGE_TAG:-latest}}
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://${DISPATCH_DB_USER}:${DISPATCH_DB_PASSWORD}@dispatch-db:5432/dispatch?sslmode=disable
@@ -268,7 +268,7 @@ services:
       - "traefik.http.services.dispatch.loadbalancer.server.port=8080"
 
   payment-service:
-    image: ${REGISTRY:-food-delivery}/payment-service:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-food-delivery}/payment-service:${PAYMENT_SERVICE_TAG:-${IMAGE_TAG:-latest}}
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://${PAYMENTS_DB_USER}:${PAYMENTS_DB_PASSWORD}@payments-db:5432/payments?sslmode=disable
@@ -295,7 +295,7 @@ services:
       - "traefik.http.services.payment.loadbalancer.server.port=8080"
 
   frontend:
-    image: ${REGISTRY:-food-delivery}/frontend:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-food-delivery}/frontend:${FRONTEND_TAG:-${IMAGE_TAG:-latest}}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 10s

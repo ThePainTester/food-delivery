@@ -51,32 +51,32 @@ services:
     logging: *logging
 
   user-service:
-    image: ${REGISTRY}/user-service:${IMAGE_TAG}
+    image: ${REGISTRY}/user-service:${USER_SERVICE_TAG}
     restart: always
     logging: *logging
 
   restaurant-service:
-    image: ${REGISTRY}/restaurant-service:${IMAGE_TAG}
+    image: ${REGISTRY}/restaurant-service:${RESTAURANT_SERVICE_TAG}
     restart: always
     logging: *logging
 
   order-service:
-    image: ${REGISTRY}/order-service:${IMAGE_TAG}
+    image: ${REGISTRY}/order-service:${ORDER_SERVICE_TAG}
     restart: always
     logging: *logging
 
   payment-service:
-    image: ${REGISTRY}/payment-service:${IMAGE_TAG}
+    image: ${REGISTRY}/payment-service:${PAYMENT_SERVICE_TAG}
     restart: always
     logging: *logging
 
   dispatch-service:
-    image: ${REGISTRY}/dispatch-service:${IMAGE_TAG}
+    image: ${REGISTRY}/dispatch-service:${DISPATCH_SERVICE_TAG}
     restart: always
     logging: *logging
 
   frontend:
-    image: ${REGISTRY}/frontend:${IMAGE_TAG}
+    image: ${REGISTRY}/frontend:${FRONTEND_TAG}
     restart: always
     logging: *logging
 
