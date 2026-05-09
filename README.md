@@ -106,7 +106,6 @@ sequenceDiagram
   OS->>Redis: GET order:{id}:location
   OS-->>C: SSE event {lat, lng, updated_at}
   OS->>Redis: SUBSCRIBE order:{id}:location:stream
-  Note over R,C: Driver pushes via plain HTTP every 5s; server fans out each fix to the customer SSE stream via Redis Pub/Sub.
   loop every 5s while in transit
     R->>OS: POST /orders/{id}/location {lat, lng}
     OS->>Redis: SETEX order:{id}:location TTL=120s
