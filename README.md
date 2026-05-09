@@ -28,47 +28,31 @@ ConfigMap.
 
 ```mermaid
 flowchart LR
-  user["User<br/>(browser)"] --> ing["Ingress NGINX"]
+  user(["User<br/>(browser)"]) --> ing["Ingress NGINX"]
 
-  subgraph apps ["Application namespace"]
-    direction TB
-    fe["Frontend<br/>(NGINX + SPA)"]
-    us["User Service<br/>(Go)"]
-    rs["Restaurant Service<br/>(Python)"]
-    os["Order Service<br/>(Node/TS)"]
-    ps["Payment Service<br/>(Go)"]
-    ds["Dispatch Service<br/>(Node/TS)"]
-    rabbit{{"RabbitMQ<br/>topic exchange"}}
-  end
+  ing --> fe["Frontend<br/>(NGINX + SPA)"]
+  ing --> us["User Service<br/>(Go)"]
+  ing --> rs["Restaurant Service<br/>(Python)"]
+  ing --> os["Order Service<br/>(Node/TS)"]
+  ing --> ps["Payment Service<br/>(Go)"]
+  ing --> ds["Dispatch Service<br/>(Node/TS)"]
 
-  ing --> fe & us & rs & os & ps & ds
+  us --> usdb[("users-db<br/>Postgres")]
+  rs --> rsdb[("restaurants-db<br/>MongoDB")]
+  os --> osdb[("orders-db<br/>Postgres")]
+  os --> orc[("orders-cache<br/>Redis")]
+  ps --> psdb[("payments-db<br/>Postgres")]
+  ds --> dsdb[("dispatch-db<br/>Postgres")]
+  ds --> dsc[("dispatch-cache<br/>Redis")]
 
-  os <--> rabbit
-  ps <--> rabbit
-  ds <--> rabbit
+  os <--> mq{{"RabbitMQ"}}
+  ps <--> mq
+  ds <--> mq
 
-  subgraph data ["Datastores"]
-    direction TB
-    usdb[("users-db<br/>Postgres")]
-    rsdb[("restaurants-db<br/>MongoDB")]
-    osdb[("orders-db<br/>Postgres")]
-    cache[("orders-cache<br/>Redis")]
-    psdb[("payments-db<br/>Postgres")]
-    dsdb[("dispatch-db<br/>Postgres")]
-    dscache[("dispatch-cache<br/>Redis")]
-  end
-
-  us --> usdb
-  rs --> rsdb
-  os --> osdb & cache
-  ps --> psdb
-  ds --> dsdb & dscache
-
-  obs[["Observability namespace<br/>Prometheus · Grafana · ELK · Tempo"]]
-  apps -. metrics / logs / traces .-> obs
+  fe & us & rs & os & ps & ds -. telemetry .-> obs[["Observability stack<br/>Prometheus · Grafana · ELK · Tempo"]]
 ```
 
-A dedicated, drilled-down view of the observability fan-in lives in the [Observability data flow](#observability-data-flow) section below.
+Rank-by-rank: user → ingress → services → datastores. RabbitMQ sits to the side as the topic-exchange hub for the three services that publish/consume; the observability stack receives metrics, logs, and traces from every app (drilled down in [Observability data flow](#observability-data-flow)).
 
 ### Order placement (happy path)
 
