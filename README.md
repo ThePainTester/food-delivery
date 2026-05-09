@@ -255,8 +255,8 @@ sequenceDiagram
   loop each ranked driver, ≤12s window
     DS->>Redis: SADD order:{orderId}:offered_drivers driver
     DS->>Redis: PUBLISH dispatch.offers {driverId, orderId, pickup}
-    Redis-->>DS: every replica receives; only the one holding this driver's SSE delivers
-    DS-->>R: SSE offer event → modal pops
+    Redis-->>DS: every replica receives, only the one holding this driver's SSE delivers
+    DS-->>R: SSE offer event, modal pops
     alt rider accepts
       R->>DS: POST /assignments/{orderId}/accept
       DS->>DS: INSERT assignments ON CONFLICT DO NOTHING
