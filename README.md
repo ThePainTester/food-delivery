@@ -48,11 +48,7 @@ flowchart LR
   os <--> mq{{"RabbitMQ"}}
   ps <--> mq
   ds <--> mq
-
-  fe & us & rs & os & ps & ds -. telemetry .-> obs[["Observability stack<br/>Prometheus · Grafana · ELK · Tempo"]]
 ```
-
-Rank-by-rank: user → ingress → services → datastores. RabbitMQ sits to the side as the topic-exchange hub for the three services that publish/consume; the observability stack receives metrics, logs, and traces from every app (drilled down in [Observability data flow](#observability-data-flow)).
 
 ### Order placement (happy path)
 
