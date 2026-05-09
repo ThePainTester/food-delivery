@@ -315,18 +315,18 @@ Instead each pod runs a single **`ChannelStreamHub`** that holds **one
 Redis subscriber connection** for the lifetime of the process and
 fans messages out to in-process listeners:
 
-```
-                Redis Pub/Sub
-                     │
-         (one subscriber connection per pod)
-                     │
-                     ▼
-             ChannelStreamHub
-                     │
-        Map<channel, Set<sseClient>>
-            ▲              ▲
-            │              │
-   subscribe(ch, fn) ──┘   └── fan out to N HTTP clients
+```mermaid
+flowchart TD
+  R[Redis Pub/Sub]
+  H[ChannelStreamHub<br/>Map&lt;channel, Set&lt;sseClient&gt;&gt;]
+  C1[SSE client A]
+  C2[SSE client B]
+  C3[SSE client C]
+
+  R -- one subscriber connection per pod --> H
+  H -- fan out --> C1
+  H -- fan out --> C2
+  H -- fan out --> C3
 ```
 
 Behaviour:
