@@ -142,16 +142,22 @@ flowchart LR
 
 ## Components
 
-**User Service** — Go (Gin) on Postgres. Owns accounts, profiles, and
+### User Service
+
+Go (Gin) on Postgres. Owns accounts, profiles, and
 authentication. Hashes passwords with bcrypt; mints RS256 JWTs and exposes
 the matching public key at `/.well-known/jwks.pem`. No events.
 
-**Restaurant Service** — Python 3.12 (FastAPI) on MongoDB. Owns
+### Restaurant Service
+
+Python 3.12 (FastAPI) on MongoDB. Owns
 restaurants and their menus (one-to-many embedded model). Verifies JWTs
 locally with the shared public key. No events; called synchronously by
 Order Service when a customer places an order.
 
-**Order Service** — Node 20 / TypeScript (Express) on Postgres + Redis.
+### Order Service
+
+Node 20 / TypeScript (Express) on Postgres + Redis.
 Owns the order lifecycle state machine and live delivery-rider
 geolocation (short-TTL keys in Redis).
 
@@ -189,7 +195,9 @@ Publishes `order.placed` (on `DRAFT → PENDING`, not on draft creation),
 `order.delivered`, `order.cancelled`, `delivery.assigned`. Consumes
 `payment.pending`, `payment.completed`, `payment.failed`.
 
-**Payment Service** — Go (Gin) on Postgres. Mock card processor: any
+### Payment Service
+
+Go (Gin) on Postgres. Mock card processor: any
 card number ending in `0000` is declined, everything else clears. Cash
 on delivery is supported as a separate flow.
 
@@ -213,24 +221,32 @@ Publishes `payment.pending` (cash created), `payment.completed`
 Consumes `order.rejected`, `order.cancelled` (refund hook — currently
 a no-op log line).
 
-**Frontend** — Single static SPA (`public/app.js` + `index.html`)
+### Frontend
+
+Single static SPA (`public/app.js` + `index.html`)
 served by NGINX. One UI for all three roles, picked at registration
 time. No build step. Includes a Leaflet map for delivery pickers and
 live tracking; default center is Cairo.
 
-**Infrastructure** — RabbitMQ as the only shared piece (topic exchange
+### Infrastructure
+
+RabbitMQ as the only shared piece (topic exchange
 `food_delivery`). Each backend service has its own database
 (`users-db`, `restaurants-db`, `orders-db`, `payments-db`). Redis
 (`orders-cache`) only stores ephemeral rider locations, never
 authoritative state.
 
-**Observability** — kube-prometheus-stack (Prometheus + Alertmanager +
+### Observability
+
+kube-prometheus-stack (Prometheus + Alertmanager +
 Grafana) for metrics, ECK ELK (Elasticsearch + Logstash + Kibana +
 Filebeat) for logs, Tempo + OTel Collector for traces. All three
 pillars deploy once into a shared `observability` namespace and watch
 all three application namespaces simultaneously.
 
-**Ingress** — Minikube's NGINX Ingress controller is the single public
+### Ingress
+
+Minikube's NGINX Ingress controller is the single public
 entry point on Kubernetes; one Ingress per env routes
 `<env>.food-delivery.local` and a separate observability Ingress
 routes `*.observability.local`. Note that there are two NGINXes in
