@@ -514,26 +514,30 @@ for s in user-service restaurant-service order-service payment-service dispatch-
 done
 ```
 
-The published tag must match what the consuming env expects:
+The published tag must match what the consuming env expects. Each service is
+versioned **independently** — bumping order-service to `v3.0.0` doesn't force
+the other services to rev. Both deployment paths reflect this:
 
-- **Compose staging/prod** read `REGISTRY` and `IMAGE_TAG` from
-  `compose/.env.<env>`. Set them to the registry namespace and version you
-  just pushed.
-- **Kubernetes staging/prod** pin the registry + tag inside
-  `k8s/overlays/<env>/kustomization.yaml`'s `images:` block. Update
-  `newName` and `newTag` after each publish, or run
-  `kustomize edit set image food-delivery/<svc>=ghcr.io/<owner>/<svc>:<version>`
-  from inside the overlay directory.
+- **Compose staging/prod** read `REGISTRY` plus per-service tag vars
+  (`USER_SERVICE_TAG`, `RESTAURANT_SERVICE_TAG`, `ORDER_SERVICE_TAG`,
+  `PAYMENT_SERVICE_TAG`, `DISPATCH_SERVICE_TAG`, `FRONTEND_TAG`) from
+  `compose/.env.<env>`. Update only the tag(s) that changed.
+- **Kubernetes staging/prod** pin per-service `newName`/`newTag` pairs inside
+  `k8s/overlays/<env>/kustomization.yaml`'s `images:` block. Edit by hand, or
+  run `kustomize edit set image food-delivery/<svc>=ghcr.io/<owner>/<svc>:<version>`
+  from inside the overlay directory for the one service you bumped.
 
-Staging and prod follow the **same** convention — both pin a specific semver
-tag pushed via the same script.
+Staging and prod follow the **same** convention — both pin specific semver
+tags pushed via the same script. The two configs (compose env file + k8s
+overlay) must stay in sync per service; a small script or CI job that mirrors
+the kustomize tag block into the env file is a reasonable next step.
 
-> The registry namespace and the overlay tags are currently hardcoded:
-> `OWNER=thepaintester` in `scripts/publish.sh` and
-> `ghcr.io/thepaintester/<svc>:v1.0.0` in
-> `k8s/overlays/{staging,prod}/kustomization.yaml`. For a fork, change `OWNER`
-> in `publish.sh` (or expose it via env var) and update each overlay's
-> `newName` / `newTag` to your namespace and the version you publish.
+> The registry namespace is hardcoded: `OWNER=thepaintester` in
+> `scripts/publish.sh` and `ghcr.io/thepaintester/<svc>` in the overlays and
+> compose env files. For a fork, change `OWNER` in `publish.sh` (or expose it
+> via env var) and update each overlay's `newName` / `newTag` and each
+> `compose/.env.<env>`'s `*_TAG` vars to your namespace and the versions you
+> publish.
 
 ## Building Images Locally
 
@@ -561,10 +565,13 @@ docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml \
 
 ### Staging
 
-Pulls pinned `${REGISTRY}/<svc>:${IMAGE_TAG}` images — same shape as prod, since
-staging tracks prod's exact version so the pre-release env matches what's about
-to ship. See [Image Build & Publish](#image-build--publish) for how to push the
-tag that `.env.staging` references. Exposes the gateway on `:8080` plus the
+Pulls pinned `${REGISTRY}/<svc>:${<SVC>_TAG}` images — each service has its
+own per-service tag var (`USER_SERVICE_TAG`, `ORDER_SERVICE_TAG`, etc.) in
+`compose/.env.staging`, mirroring the per-service `newTag` entries in
+`k8s/overlays/staging/kustomization.yaml`. Same shape as prod, since staging
+tracks prod's exact versions so the pre-release env matches what's about to
+ship. See [Image Build & Publish](#image-build--publish) for how to push the
+tags that `.env.staging` references. Exposes the gateway on `:8080` plus the
 RabbitMQ UI; data stores stay internal. `restart: unless-stopped`.
 
 ```bash
@@ -574,9 +581,12 @@ docker compose -f compose/docker-compose.yml -f compose/docker-compose.staging.y
 
 ### Production
 
-Pulls pinned `:${IMAGE_TAG}` images. Publishes only `:80` and `:443` on the
-gateway; nothing else is reachable from the host. Adds resource limits and
-log rotation. `restart: always`.
+Pulls pinned `${REGISTRY}/<svc>:${<SVC>_TAG}` images, with no fallback —
+each per-service tag must be set in `compose/.env.prod` or compose refuses
+to start (mirrors the `newTag` entries in
+`k8s/overlays/prod/kustomization.yaml`). Publishes only `:80` and `:443` on
+the gateway; nothing else is reachable from the host. Adds log rotation.
+`restart: always`.
 
 ```bash
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml \
@@ -754,28 +764,3 @@ Templates live alongside as `*.example.yaml`. Database passwords and the
 RabbitMQ credentials are also stored as Secrets per service. Image-pull
 credentials for staging/prod come from `$CR_PAT` at bootstrap time and are
 never written to disk.
-
-## Troubleshooting
-
-**Minikube out of memory.** ECK + Prometheus together need ~4 GB. Start with
-`minikube start --memory=6g --cpus=4`.
-
-**Ingress hostnames don't resolve.** `/etc/hosts` not populated, or
-`$(minikube ip)` changed (it does, between minikube restarts). Re-run
-`echo "$(minikube ip) dev.food-delivery.local" | sudo tee -a /etc/hosts` and
-delete the stale line.
-
-**Stale PVC blocks schema init.** When you change SQL migrations in place
-(early dev), the old volume still has the old schema. `kubectl delete
-namespace food-delivery-dev` to drop the PVC, then re-apply.
-
-**RabbitMQ connection refused at boot.** Order/Payment services race against
-RabbitMQ on first start. Both have a `wait-for-rabbit` initContainer; if
-they still flap, `kubectl rollout restart` once Rabbit is up — the failure
-isn't sticky.
-
-**Grafana dashboards show "No data" or "Datasource not found".** Provisioned
-dashboards reference `datasource.uid="prometheus"`. If Helm reinstalls
-generate a fresh UID, the bundled JSON breaks. Fix: keep
-`prometheus.uid: prometheus` pinned in the kube-prometheus-stack values
-file (already set).
