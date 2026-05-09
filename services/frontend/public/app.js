@@ -441,7 +441,7 @@ async function viewCustomerOrders() {
     target.innerHTML = (list || []).map(orderRow).join('') || '<p class="text-slate-600">No orders yet.</p>';
   };
   try { await refresh(); } catch (err) { flash(err.message); }
-  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
+  openOrdersStream({}, refresh);
 }
 
 function orderRow(o) {
@@ -471,12 +471,10 @@ function statusTimeline(status) {
 
 let pollTimer = null;
 let trackEventSource = null;
+let ordersStream = null;
 let mapInstance = null;
 let mapMarker = null;
 let destMarker = null;
-let listPollTimer = null;
-
-const LIST_POLL_MS = 4000;
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -485,12 +483,33 @@ function stopPolling() {
 }
 
 function stopListPolling() {
-  if (listPollTimer) { clearInterval(listPollTimer); listPollTimer = null; }
+  if (ordersStream) { ordersStream.close(); ordersStream = null; }
 }
 
-// Wraps a refresh fn so transient errors during polling don't spam the toast.
+// Wraps a refresh fn so transient errors don't spam the toast.
 function pollSilently(fn) {
   return () => { fn().catch(() => { }); };
+}
+
+// Subscribe to /orders/stream. The query string is appended to the URL
+// after the auth token (use it to pass restaurant_id for restaurant role).
+// onMessage receives the parsed envelope; pass `idFilter` to react only to
+// events for one order id (single-order views).
+function openOrdersStream({ query = '', idFilter = null } = {}, refresh) {
+  const token = encodeURIComponent(getToken() || '');
+  const qs = query ? `&${query}` : '';
+  const url = `/api/orders/stream?token=${token}${qs}`;
+  if (ordersStream) ordersStream.close();
+  ordersStream = new EventSource(url);
+  const safeRefresh = pollSilently(refresh);
+  ordersStream.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      if (idFilter && data.order_id !== idFilter) return;
+      safeRefresh();
+    } catch { /* ignore malformed frames */ }
+  };
+  // EventSource auto-reconnects on transient errors; nothing to do here.
 }
 
 async function viewCustomerOrder(id) {
@@ -548,7 +567,7 @@ async function viewCustomerOrder(id) {
     } catch (err) { flash(err.message); }
   };
   await refresh();
-  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
+  openOrdersStream({ idFilter: id }, refresh);
 }
 
 // Destination marker uses a coloured icon so it's distinguishable from the driver.
@@ -654,7 +673,7 @@ async function viewRestaurantOrders() {
     } catch (err) { flash(err.message); }
   };
   await refresh();
-  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
+  openOrdersStream({ query: `restaurant_id=${encodeURIComponent(myId)}` }, refresh);
 }
 
 function restaurantActions(o) {
@@ -828,7 +847,7 @@ async function viewDeliveryOrders() {
       </a>`).join('') || '<p class="text-slate-600">No active deliveries.</p>';
   };
   try { await refresh(); } catch (err) { flash(err.message); }
-  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
+  openOrdersStream({}, refresh);
 }
 
 let geoWatchId = null;
@@ -959,7 +978,7 @@ async function viewDeliveryOrder(id) {
     } catch (err) { flash(err.message); }
   };
   await refresh();
-  listPollTimer = setInterval(pollSilently(refresh), LIST_POLL_MS);
+  openOrdersStream({ idFilter: id }, refresh);
 }
 
 function deliveryActions(o) {

@@ -192,6 +192,105 @@ play: this **ingress controller** at the cluster edge, and the
 **frontend pod's NGINX** that just serves static SPA files. Compose
 uses Traefik as the gateway instead.
 
+## Real-time Updates (SSE + Redis Pub/Sub)
+
+The SPA never polls for live data. Instead the order-service exposes
+two **Server-Sent Event** streams that push updates to the browser as
+they happen, fed internally by **Redis Pub/Sub**.
+
+### Streams
+
+| Endpoint | Used by | Pushes |
+|---|---|---|
+| `GET /orders/{id}/location/stream` | Customer's live-tracking map | Driver location fixes for one order |
+| `GET /orders/stream` | Customer order list / order detail / restaurant orders / rider lobby + active deliveries | Order-state changes (`order.placed`, `order.accepted`, `order.ready`, `delivery.assigned`, `order.picked_up`, `order.delivered`, `order.cancelled`, `order.paid`) |
+
+Both routes set SSE headers (`Content-Type: text/event-stream`,
+`Cache-Control: no-cache`, `X-Accel-Buffering: no`) and write a `:hb`
+heartbeat every 25 s so idle proxies don't close the connection. The
+nginx Ingress is annotated with `proxy-buffering: off` and a 1 h
+`proxy-read-timeout` so frames are flushed live and long-lived idle
+streams aren't killed. Traefik (Compose) needs no special config — it
+streams responses by default.
+
+`EventSource` can't send an `Authorization` header, so SSE routes opt
+in to a `?token=` query-string fallback (header still preferred when
+present).
+
+### Redis Pub/Sub as the fan-out bus
+
+Whenever the order-service mutates an order (creates one, transitions
+its status, marks it paid, accepts a delivery claim) it both publishes
+the existing RabbitMQ event for other services **and** publishes a
+small envelope to one or more Redis channels keyed by recipient:
+
+```
+customer:<userId>:orders          # this customer's orders changed
+restaurant:<restaurantId>:orders  # this restaurant's orders changed
+delivery:<userId>:orders          # this rider's deliveries changed
+delivery:lobby                    # global rider list of READY/claim events
+order:<orderId>:location:stream   # one driver-location fix
+```
+
+Why a separate channel per recipient instead of a single firehose: the
+SSE handler's auth has already pinned down *who* the connected client
+is, so it subscribes only to channels relevant to that principal. No
+cross-tenant leakage, no client-side filtering of unrelated events.
+
+The driver's location `POST` writes to Redis (`SETEX`) so latecomers
+get a snapshot, then `PUBLISH`es so any open SSE subscriber gets the
+fix immediately. Order-state mutations skip the `SETEX` — Postgres is
+the source of truth and the SPA refetches when an event arrives.
+
+### Connection-budget control: in-process fan-out hub
+
+A naive implementation opens **one Redis connection per connected SSE
+client** (`redis.duplicate()` per request). At scale that exhausts
+Redis's `maxclients` long before the Node HTTP server is the
+bottleneck.
+
+Instead each pod runs a single **`ChannelStreamHub`** that holds **one
+Redis subscriber connection** for the lifetime of the process and
+fans messages out to in-process listeners:
+
+```
+                Redis Pub/Sub
+                     │
+         (one subscriber connection per pod)
+                     │
+                     ▼
+             ChannelStreamHub
+                     │
+        Map<channel, Set<sseClient>>
+            ▲              ▲
+            │              │
+   subscribe(ch, fn) ──┘   └── fan out to N HTTP clients
+```
+
+Behaviour:
+
+- The first listener for a channel triggers a Redis `SUBSCRIBE`.
+- The last listener leaving triggers `UNSUBSCRIBE`, so idle channels
+  aren't held open.
+- Two customers watching the same order share **one** Redis
+  subscription — the hub demultiplexes locally.
+
+So the per-pod cost is bounded by what's actually being watched, not
+by how many tabs are open:
+
+| | Naive | This app |
+|---|---|---|
+| Redis connections per pod | `O(SSE clients)` | **1** |
+| Redis SUBSCRIBEs per pod | `O(SSE clients)` | `O(channels currently watched)` |
+| In-process fanout cost | n/a | one `Map.get` + a `Set` iteration per message |
+
+Across pods the bus stays the same — Redis Pub/Sub broadcasts each
+message to every subscribed pod, which then fans out to its own
+locally-connected SSE clients. There's no sticky-session requirement
+on the Ingress: a customer can be load-balanced to any order-service
+replica and still receive their events, because every replica's hub
+subscribes to the same recipient channels on demand.
+
 ## Project Structure
 
 ```

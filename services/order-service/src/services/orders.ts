@@ -1,10 +1,18 @@
+import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
 
 import { RestaurantClient, RestaurantNotFoundError } from "../clients/restaurants";
 import { ActorKind, OrderStatus, Role, canTransition } from "../domain/statuses";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { logger } from "../logger";
 import { minorToDecimal, decimalToMinor } from "../money";
 import { Rabbit } from "../rabbit";
+import {
+  DELIVERY_LOBBY_CHANNEL,
+  customerOrdersChannel,
+  deliveryOrdersChannel,
+  restaurantOrdersChannel,
+} from "../redis";
 import { OrderItemRow, OrderRow, OrdersRepo } from "../repositories/orders";
 
 export type Actor =
@@ -32,6 +40,7 @@ export class OrdersService {
   constructor(
     private repo: OrdersRepo,
     private rabbit: Rabbit,
+    private redis: Redis,
     private restaurants: RestaurantClient,
     private deliveryFeeMinor: number,
   ) {}
@@ -44,6 +53,48 @@ export class OrdersService {
     const ownerId = await this.restaurants.getOwnerId(restaurantId, actor.rawToken);
     if (ownerId === null) throw notFound("restaurant not found");
     if (ownerId !== actor.userId) throw forbidden("not restaurant owner");
+  }
+
+  // Fan out a small "order changed" envelope to every Redis Pub/Sub channel
+  // whose connected SSE clients should care. Customers always care about
+  // their own orders; the restaurant always cares about its orders; the
+  // assigned rider (when present) cares about their orders. `delivery.lobby`
+  // is the global rider list channel — every rider on the lobby view sees
+  // ready orders appear and disappear via this.
+  //
+  // Best effort — a failed publish should not roll back the persisted state
+  // change. Worst case the user's UI stays stale until their next manual
+  // navigation.
+  private async fanoutOrder(eventType: string, order: OrderRow): Promise<void> {
+    const payload = JSON.stringify({
+      event: eventType,
+      order_id: order.id,
+      status: order.status,
+      paid: order.paid,
+      delivery_user_id: order.delivery_user_id,
+      updated_at: new Date().toISOString(),
+    });
+    const targets = new Set<string>([
+      customerOrdersChannel(order.customer_id),
+      restaurantOrdersChannel(order.restaurant_id),
+    ]);
+    if (order.delivery_user_id) {
+      targets.add(deliveryOrdersChannel(order.delivery_user_id));
+    }
+    // The lobby reflects what's claimable / has been claimed. Any of these
+    // events changes the lobby's view, so push to it.
+    if (
+      eventType === "order.ready" ||
+      eventType === "delivery.assigned" ||
+      eventType === "order.cancelled"
+    ) {
+      targets.add(DELIVERY_LOBBY_CHANNEL);
+    }
+    try {
+      await Promise.all([...targets].map((ch) => this.redis.publish(ch, payload)));
+    } catch (err) {
+      logger.warn({ err, eventType, orderId: order.id }, "order fanout failed");
+    }
   }
 
   async createOrder(customerId: string, input: CreateOrderInput): Promise<OrderRow> {
@@ -108,6 +159,7 @@ export class OrdersService {
       total: Number(minorToDecimal(order.total_minor)),
       delivery_address: order.delivery_address,
     });
+    await this.fanoutOrder("order.placed", order);
 
     return order;
   }
@@ -242,6 +294,7 @@ export class OrdersService {
         });
         break;
     }
+    await this.fanoutOrder(`order.${target.toLowerCase()}`, updated);
     return updated;
   }
 
@@ -257,10 +310,13 @@ export class OrdersService {
       delivery_user_id: claimed.delivery_user_id!,
       assigned_at: new Date().toISOString(),
     });
+    await this.fanoutOrder("delivery.assigned", claimed);
     return claimed;
   }
 
   async markPaid(orderId: string): Promise<void> {
     await this.repo.markPaid(orderId);
+    const o = await this.repo.findById(orderId);
+    if (o) await this.fanoutOrder("order.paid", o);
   }
 }

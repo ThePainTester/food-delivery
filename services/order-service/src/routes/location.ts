@@ -4,7 +4,8 @@ import { z } from "zod";
 import { Principal, requireAuth } from "../auth/jwt";
 import { badRequest } from "../errors";
 import { logger } from "../logger";
-import { LocationStreamHub } from "../services/location-stream-hub";
+import { locationChannel } from "../redis";
+import { ChannelStreamHub } from "../services/channel-stream-hub";
 import { Actor } from "../services/orders";
 import { LocationService } from "../services/location";
 
@@ -22,7 +23,7 @@ const userActor = (p: Principal): Actor => ({
 
 interface Deps {
   service: LocationService;
-  hub: LocationStreamHub;
+  hub: ChannelStreamHub;
   jwt: { publicKey: Buffer; issuer: string };
 }
 
@@ -80,7 +81,7 @@ export function locationRouter(deps: Deps): Router {
     // watching the same order share a single SUBSCRIBE.
     let release: () => void;
     try {
-      release = await deps.hub.subscribe(orderId, (msg) => {
+      release = await deps.hub.subscribe(locationChannel(orderId), (msg) => {
         res.write(`data: ${msg}\n\n`);
       });
     } catch (err) {

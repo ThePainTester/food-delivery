@@ -33,6 +33,7 @@ Topic exchange `food_delivery`; routing key = event name.
 - `POST /orders/:id/location` — assigned delivery; writes to Redis (TTL) and publishes on Redis Pub/Sub.
 - `GET /orders/:id/location` — customer or restaurant; one-shot read.
 - `GET /orders/:id/location/stream` — customer or restaurant; SSE. Pushes the latest fix on connect, then every driver POST as it arrives. Token via `?token=` (EventSource can't set headers).
+- `GET /orders/stream` — SSE stream of order-state changes for the calling principal. Customers get their own orders; riders get their own deliveries plus the global `delivery:lobby` channel; restaurants pass `?restaurant_id=` and receive that restaurant's orders (ownership verified). Each event is a small envelope `{event, order_id, status, paid, ...}`; the SPA reacts by refetching whichever list/order it's rendering. Token via `?token=`.
 - `GET /healthz`
 
 ## Money

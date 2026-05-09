@@ -1,11 +1,10 @@
 import Redis from "ioredis";
 
 import { logger } from "../logger";
-import { locationChannel } from "../redis";
 
 type Subscriber = (payload: string) => void;
 
-// LocationStreamHub holds a *single* Redis subscriber connection per pod
+// ChannelStreamHub holds a *single* Redis subscriber connection per pod
 // and demultiplexes incoming Pub/Sub messages to in-process listeners.
 //
 // Naive per-SSE-client `redis.duplicate()` opens one Redis connection per
@@ -13,12 +12,12 @@ type Subscriber = (payload: string) => void;
 // before Node's HTTP server is the bottleneck. With this hub:
 //
 //   - one Redis SUBSCRIBE connection for the whole pod (lifetime: process)
-//   - one channel SUBSCRIBE per *order* with at least one listener
-//   - any number of HTTP/SSE clients fan out locally via a Map<channel, Set>
+//   - one channel SUBSCRIBE per *channel* with at least one listener
+//   - any number of HTTP/SSE clients fan out locally via Map<channel, Set>
 //
-// When the last listener for an order disconnects we UNSUBSCRIBE so we're
-// not holding subscriptions for orders nobody is watching.
-export class LocationStreamHub {
+// When the last listener for a channel disconnects we UNSUBSCRIBE so we're
+// not holding subscriptions for channels nobody is watching.
+export class ChannelStreamHub {
   private subscriber: Redis;
   private listeners = new Map<string, Set<Subscriber>>();
 
@@ -38,15 +37,14 @@ export class LocationStreamHub {
       }
     });
     this.subscriber.on("error", (err) => {
-      logger.error({ err }, "location stream subscriber error");
+      logger.error({ err }, "channel stream subscriber error");
     });
   }
 
-  // Register `fn` to receive every Pub/Sub message for `orderId` until the
-  // returned unsubscribe handle is called. The first listener for an order
+  // Register `fn` to receive every Pub/Sub message for `channel` until the
+  // returned unsubscribe handle is called. The first listener for a channel
   // triggers a Redis SUBSCRIBE; the last one to leave triggers UNSUBSCRIBE.
-  async subscribe(orderId: string, fn: Subscriber): Promise<() => void> {
-    const channel = locationChannel(orderId);
+  async subscribe(channel: string, fn: Subscriber): Promise<() => void> {
     let set = this.listeners.get(channel);
     if (!set) {
       set = new Set();
@@ -71,6 +69,21 @@ export class LocationStreamHub {
         });
       }
     };
+  }
+
+  // Convenience: subscribe to several channels at once. The returned
+  // release closes all of them.
+  async subscribeAll(channels: string[], fn: Subscriber): Promise<() => void> {
+    const releases: (() => void)[] = [];
+    try {
+      for (const ch of channels) {
+        releases.push(await this.subscribe(ch, fn));
+      }
+    } catch (err) {
+      releases.forEach((r) => r());
+      throw err;
+    }
+    return () => releases.forEach((r) => r());
   }
 
   async close(): Promise<void> {

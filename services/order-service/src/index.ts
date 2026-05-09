@@ -12,7 +12,7 @@ import { Rabbit } from "./rabbit";
 import { createRedis } from "./redis";
 import { OrdersRepo } from "./repositories/orders";
 import { buildApp } from "./server";
-import { LocationStreamHub } from "./services/location-stream-hub";
+import { ChannelStreamHub } from "./services/channel-stream-hub";
 import { LocationService } from "./services/location";
 import { OrdersService } from "./services/orders";
 
@@ -26,13 +26,19 @@ async function main() {
 
   const restaurants = new RestaurantClient(cfg.restaurantServiceUrl);
   const repo = new OrdersRepo(pool);
-  const ordersService = new OrdersService(repo, rabbit, restaurants, cfg.deliveryFeeMinor);
+  const ordersService = new OrdersService(repo, rabbit, redis, restaurants, cfg.deliveryFeeMinor);
   const locationService = new LocationService(repo, redis, restaurants, cfg.locationTtlSeconds);
-  const locationHub = new LocationStreamHub(redis);
+  const channelHub = new ChannelStreamHub(redis);
 
   await startConsumers(rabbit, pool, ordersService);
 
-  const app = buildApp({ cfg, orders: ordersService, location: locationService, hub: locationHub });
+  const app = buildApp({
+    cfg,
+    orders: ordersService,
+    location: locationService,
+    hub: channelHub,
+    restaurants,
+  });
   const server = app.listen(cfg.port, () => {
     logger.info({ port: cfg.port }, "order-service listening");
   });
@@ -42,7 +48,7 @@ async function main() {
     server.close();
     await rabbit.close();
     await pool.end();
-    await locationHub.close();
+    await channelHub.close();
     redis.disconnect();
     await shutdownTracing();
     process.exit(0);

@@ -1,13 +1,15 @@
 import express from "express";
 import pinoHttp from "pino-http";
 
+import { RestaurantClient } from "./clients/restaurants";
 import { Config } from "./config";
 import { errorHandler } from "./errors";
 import { logger } from "./logger";
 import { metricsMiddleware, metricsRouter } from "./observability";
 import { ordersRouter } from "./routes/orders";
+import { ordersStreamRouter } from "./routes/orders-stream";
 import { locationRouter } from "./routes/location";
-import { LocationStreamHub } from "./services/location-stream-hub";
+import { ChannelStreamHub } from "./services/channel-stream-hub";
 import { LocationService } from "./services/location";
 import { OrdersService } from "./services/orders";
 
@@ -15,10 +17,11 @@ interface Wired {
   cfg: Config;
   orders: OrdersService;
   location: LocationService;
-  hub: LocationStreamHub;
+  hub: ChannelStreamHub;
+  restaurants: RestaurantClient;
 }
 
-export function buildApp({ cfg, orders, location, hub }: Wired): express.Express {
+export function buildApp({ cfg, orders, location, hub, restaurants }: Wired): express.Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(pinoHttp({ logger }));
@@ -28,6 +31,9 @@ export function buildApp({ cfg, orders, location, hub }: Wired): express.Express
   const jwt = { publicKey: cfg.jwtPublicKey, issuer: cfg.jwtIssuer };
 
   app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
+  // Stream router goes first so GET /orders/stream matches before
+  // ordersRouter's GET /orders/:id.
+  app.use("/orders", ordersStreamRouter({ hub, restaurants, jwt }));
   app.use("/orders", ordersRouter({ service: orders, jwt }));
   app.use("/orders", locationRouter({ service: location, hub, jwt }));
 
