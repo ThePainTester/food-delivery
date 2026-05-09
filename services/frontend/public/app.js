@@ -470,6 +470,7 @@ function statusTimeline(status) {
 }
 
 let pollTimer = null;
+let trackEventSource = null;
 let mapInstance = null;
 let mapMarker = null;
 let destMarker = null;
@@ -479,6 +480,7 @@ const LIST_POLL_MS = 4000;
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (trackEventSource) { trackEventSource.close(); trackEventSource = null; }
   if (mapInstance) { mapInstance.remove(); mapInstance = null; mapMarker = null; destMarker = null; }
 }
 
@@ -539,7 +541,7 @@ async function viewCustomerOrder(id) {
       const dest = (o.delivery_latitude != null && o.delivery_longitude != null)
         ? { lat: o.delivery_latitude, lng: o.delivery_longitude } : null;
       if (o.status === 'PICKED_UP') {
-        if (!pollTimer) startCustomerTracking(o.id, dest);
+        if (!trackEventSource) startCustomerTracking(o.id, dest);
       } else {
         stopPolling();
       }
@@ -582,19 +584,27 @@ function ensureMap(elId, driver, destination) {
 }
 
 function startCustomerTracking(orderId, destination) {
-  document.getElementById('map-note').textContent = 'Polling driver location every 3s.';
-  // Show destination immediately even before any driver fix arrives.
+  document.getElementById('map-note').textContent = 'Live tracking via SSE.';
   if (destination) ensureMap('map', null, destination);
-  const tick = async () => {
+
+  // EventSource can't set Authorization headers, so the order-service
+  // route also accepts the token on `?token=` for this endpoint.
+  const token = encodeURIComponent(getToken() || '');
+  const url = `/api/orders/${orderId}/location/stream?token=${token}`;
+  if (trackEventSource) trackEventSource.close();
+  trackEventSource = new EventSource(url);
+  trackEventSource.onmessage = (ev) => {
     try {
-      const loc = await API.getLocation(orderId);
+      const loc = JSON.parse(ev.data);
       if (loc && loc.latitude != null) {
         ensureMap('map', { lat: loc.latitude, lng: loc.longitude }, destination);
       }
-    } catch { /* swallow — driver may not have posted yet */ }
+    } catch { /* ignore malformed frames */ }
   };
-  tick();
-  pollTimer = setInterval(tick, 3000);
+  trackEventSource.onerror = () => {
+    // Browser auto-reconnects on transient errors; nothing to do here
+    // unless we want to surface a stale-data badge.
+  };
 }
 
 // ---------- views: restaurant ----------------------------------------------

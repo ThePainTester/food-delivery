@@ -20,13 +20,26 @@ export interface JwtConfig {
   issuer: string;
 }
 
-export function requireAuth(cfg: JwtConfig) {
+export interface RequireAuthOptions {
+  // EventSource cannot send Authorization headers, so the SSE route opts in
+  // to reading the token from `?token=` as a fallback. The header is still
+  // preferred when present. Tokens in query strings can leak into access
+  // logs — only enable this for the SSE endpoint.
+  allowQueryToken?: boolean;
+}
+
+export function requireAuth(cfg: JwtConfig, opts: RequireAuthOptions = {}) {
   return (req: Request, res: Response, next: NextFunction) => {
     const h = req.header("authorization");
-    if (!h || !h.startsWith("Bearer ")) {
+    let token: string | undefined;
+    if (h && h.startsWith("Bearer ")) {
+      token = h.slice("Bearer ".length);
+    } else if (opts.allowQueryToken && typeof req.query.token === "string") {
+      token = req.query.token;
+    }
+    if (!token) {
       return res.status(401).json({ error: "unauthorized", message: "missing bearer token" });
     }
-    const token = h.slice("Bearer ".length);
     try {
       const claims = jwt.verify(token, cfg.publicKey, {
         algorithms: ["RS256"],

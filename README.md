@@ -102,18 +102,17 @@ sequenceDiagram
   Note over OS,MQ: Order is READY (restaurant ready, no rider yet)
   R->>OS: POST /orders/{id}/assign (self-claim)
   OS->>MQ: publish delivery.assigned
-  Note over R,C: Polling is a simplification — in production both sides<br/>would hold a WebSocket (or SSE) for push-driven updates.
-  par Rider pushes location
-    loop every few seconds while in transit
-      R->>OS: POST /orders/{id}/location {lat, lng}
-      OS->>Redis: SETEX order:{id}:loc TTL=120s
-    end
-  and Customer polls location
-    loop every few seconds while in transit
-      C->>OS: GET /orders/{id}/location
-      OS->>Redis: GET order:{id}:loc
-      OS-->>C: {lat, lng, updated_at}
-    end
+  C->>OS: GET /orders/{id}/location/stream (SSE)
+  OS->>Redis: GET order:{id}:loc (initial snapshot, if any)
+  OS-->>C: data: {lat, lng, updated_at}
+  OS->>Redis: SUBSCRIBE order:{id}:loc:stream
+  Note over R,C: Driver pushes via plain HTTP every 5s; server fans out<br/>each fix to the customer's open SSE stream via Redis Pub/Sub.
+  loop every 5s while in transit
+    R->>OS: POST /orders/{id}/location {lat, lng}
+    OS->>Redis: SETEX order:{id}:loc TTL=120s
+    OS->>Redis: PUBLISH order:{id}:loc:stream {lat, lng, updated_at}
+    Redis-->>OS: deliver to subscriber
+    OS-->>C: data: {lat, lng, updated_at}
   end
   R->>OS: PATCH /orders/{id}/status PICKED_UP → DELIVERED
   OS->>MQ: publish order.picked_up, order.delivered
@@ -312,8 +311,7 @@ The published tag must match what the consuming env expects:
   from inside the overlay directory.
 
 Staging and prod follow the **same** convention — both pin a specific semver
-tag pushed via the same script. There is no floating `:staging` tag; staging
-tracks prod's exact version.
+tag pushed via the same script.
 
 > The registry namespace and the overlay tags are currently hardcoded:
 > `OWNER=thepaintester` in `scripts/publish.sh` and

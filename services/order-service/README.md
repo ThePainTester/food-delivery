@@ -30,8 +30,9 @@ Topic exchange `food_delivery`; routing key = event name.
 - `GET /orders?customer_id=|restaurant_id=|delivery_user_id=` — role-scoped.
 - `PATCH /orders/:id/status` — role-gated state machine.
 - `POST /orders/:id/assign` — role=delivery, self-assign to READY+unassigned order.
-- `POST /orders/:id/location` — assigned delivery; writes to Redis (TTL).
-- `GET /orders/:id/location` — customer or restaurant.
+- `POST /orders/:id/location` — assigned delivery; writes to Redis (TTL) and publishes on Redis Pub/Sub.
+- `GET /orders/:id/location` — customer or restaurant; one-shot read.
+- `GET /orders/:id/location/stream` — customer or restaurant; SSE. Pushes the latest fix on connect, then every driver POST as it arrives. Token via `?token=` (EventSource can't set headers).
 - `GET /healthz`
 
 ## Money

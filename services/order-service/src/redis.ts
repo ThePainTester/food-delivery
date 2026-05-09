@@ -7,3 +7,7 @@ export function createRedis(url: string): Redis {
 export function locationKey(orderId: string): string {
   return `order:${orderId}:location`;
 }
+
+export function locationChannel(orderId: string): string {
+  return `order:${orderId}:location:stream`;
+}
