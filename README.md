@@ -57,9 +57,9 @@ flowchart LR
     otel["OTel Collector"]
   end
 
-  us & rs & os & ps & fe -. metrics .-> prom
+  us & rs & os & ps & ds & fe -. metrics .-> prom
   us & rs & os & ps & ds & fe -. stdout logs .-> es
-  us & rs & os & ps -. OTLP traces .-> otel --> tempo
+  us & rs & os & ps & ds -. OTLP traces .-> otel --> tempo
   prom --> graf
   tempo --> graf
   es --> kib
@@ -130,12 +130,13 @@ flowchart LR
     a2["Restaurant Service"]
     a3["Order Service"]
     a4["Payment Service"]
+    a6["Dispatch Service"]
     a5["Frontend NGINX"]
   end
 
-  a1 & a2 & a3 & a4 & a5 -- "/metrics + ServiceMonitors" --> prom["Prometheus<br/>(kube-prometheus-stack)"]
-  a1 & a2 & a3 & a4 & a5 -- "stdout JSON" --> fb["Filebeat DaemonSet"]
-  a1 & a2 & a3 & a4 -- "OTLP gRPC" --> otel["OTel Collector"]
+  a1 & a2 & a3 & a4 & a6 & a5 -- "/metrics + ServiceMonitors" --> prom["Prometheus<br/>(kube-prometheus-stack)"]
+  a1 & a2 & a3 & a4 & a6 & a5 -- "stdout JSON" --> fb["Filebeat DaemonSet"]
+  a1 & a2 & a3 & a4 & a6 -- "OTLP gRPC" --> otel["OTel Collector"]
 
   fb --> ls["Logstash"] --> es[("Elasticsearch")]
   otel --> tempo[("Tempo")]
@@ -254,7 +255,7 @@ sequenceDiagram
   loop each ranked driver, ≤12s window
     DS->>Redis: SADD order:{orderId}:offered_drivers driver
     DS->>Redis: PUBLISH dispatch.offers {driverId, orderId, pickup}
-    Redis-->>DS: every replica receives; only the one with this<br/>driver's SSE delivers
+    Redis-->>DS: every replica receives; only the one holding this driver's SSE delivers
     DS-->>R: SSE offer event → modal pops
     alt rider accepts
       R->>DS: POST /assignments/{orderId}/accept
