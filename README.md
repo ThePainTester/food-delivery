@@ -153,13 +153,26 @@ Order Service when a customer places an order.
 
 **Order Service** — Node 20 / TypeScript (Express) on Postgres + Redis.
 Owns the order lifecycle state machine and live delivery-rider
-geolocation (short-TTL keys in Redis). The state machine is:
+geolocation (short-TTL keys in Redis).
 
-```
-DRAFT → PENDING → ACCEPTED → PREPARING → READY → PICKED_UP → DELIVERED
-                       └── REJECTED (terminal)
-                ┘   ┘   ┘   ┘   ┘
-              CANCELLED  (terminal — from any pre-PICKED_UP state)
+```mermaid
+stateDiagram-v2
+  [*] --> DRAFT: customer POST /orders
+  DRAFT --> PENDING: payment.pending / payment.completed
+  DRAFT --> CANCELLED: customer abandons / payment.failed
+  PENDING --> ACCEPTED: restaurant accepts
+  PENDING --> REJECTED: restaurant rejects
+  PENDING --> CANCELLED: customer / restaurant
+  ACCEPTED --> PREPARING: restaurant
+  ACCEPTED --> CANCELLED: restaurant
+  PREPARING --> READY: restaurant
+  PREPARING --> CANCELLED: restaurant
+  READY --> PICKED_UP: rider (after self-claim)
+  READY --> CANCELLED: restaurant
+  PICKED_UP --> DELIVERED: rider
+  DELIVERED --> [*]
+  REJECTED --> [*]
+  CANCELLED --> [*]
 ```
 
 - **DRAFT** is the initial state when a customer places a cart. The
@@ -167,8 +180,7 @@ DRAFT → PENDING → ACCEPTED → PREPARING → READY → PICKED_UP → DELIVER
   checkout" affordance until they pick a payment method.
 - **PENDING** means the customer has committed to a payment method
   (cash chosen, or card charged successfully) and the restaurant can
-  now accept/reject. The transition `DRAFT → PENDING` is fired by the
-  consumer for `payment.pending` (cash) or `payment.completed` (card).
+  now accept/reject.
 - **CANCELLED** can come from the customer (DRAFT or PENDING), the
   system on `payment.failed`, or the restaurant up through READY.
 
@@ -179,13 +191,16 @@ Publishes `order.placed` (on `DRAFT → PENDING`, not on draft creation),
 
 **Payment Service** — Go (Gin) on Postgres. Mock card processor: any
 card number ending in `0000` is declined, everything else clears. Cash
-on delivery is supported as a separate flow. The state machine is
-small and mostly fan-shaped:
+on delivery is supported as a separate flow.
 
-```
-                  ┌── COMPLETED   (terminal — card cleared)
-   (new payment) ─┼── FAILED      (terminal — card declined)
-                  └── PENDING ─── COMPLETED   (cash collected by rider)
+```mermaid
+stateDiagram-v2
+  [*] --> COMPLETED: card cleared
+  [*] --> FAILED: card declined
+  [*] --> PENDING: cash chosen
+  PENDING --> COMPLETED: rider collects cash
+  COMPLETED --> [*]
+  FAILED --> [*]
 ```
 
 - Card path goes straight to `COMPLETED` or `FAILED` — it never sits
