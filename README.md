@@ -276,9 +276,6 @@ Consumes `order.accepted`, `order.cancelled` (broadcasts a global
 cancel on `dispatch.responses:{orderId}` so any in-flight loop on any
 pod aborts immediately and the rider's modal closes).
 
-Horizontally scalable from day one — see [services/dispatch-service/README.md](services/dispatch-service/README.md)
-for the Redis surface, lock semantics, and known v1 limitations.
-
 ### Frontend
 
 Single static SPA (`public/app.js` + `index.html`)

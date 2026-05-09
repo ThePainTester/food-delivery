@@ -107,13 +107,3 @@ analytics-grade telemetry is left to logs.
 | `SEARCH_RADIUS_M` | 3000 | candidate radius |
 | `HEARTBEAT_STALE_MS` | 30000 | drop drivers older than this |
 | `HOSTNAME` | random uuid | used as the lock value (`INSTANCE_ID`) |
-
-## Known v1 limitations
-
-- **Crash between INSERT `assignments` and publish `delivery.assigned`** —
-  order-service never learns about the assignment. Future fix: a
-  reconciler that republishes recent assignments (the consumer already
-  uses `processed_events` for idempotency), or a transactional outbox.
-- Re-dispatch when all candidates exhaust within the lock window is
-  manual — there's no automatic radius expansion.
-- No acceptance-rate-weighted ranking — distance ASC only.
