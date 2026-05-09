@@ -152,20 +152,51 @@ locally with the shared public key. No events; called synchronously by
 Order Service when a customer places an order.
 
 **Order Service** — Node 20 / TypeScript (Express) on Postgres + Redis.
-Owns the order lifecycle state machine
-(`PENDING → ACCEPTED → PREPARING → READY → PICKED_UP → DELIVERED`,
-plus `REJECTED` / `CANCELLED`) and live delivery-rider geolocation
-(short-TTL keys in Redis). Publishes `order.placed`, `order.accepted`,
-`order.rejected`, `order.ready`, `order.picked_up`, `order.delivered`,
-`order.cancelled`, `delivery.assigned`. Consumes `payment.completed`,
-`payment.failed`.
+Owns the order lifecycle state machine and live delivery-rider
+geolocation (short-TTL keys in Redis). The state machine is:
+
+```
+DRAFT → PENDING → ACCEPTED → PREPARING → READY → PICKED_UP → DELIVERED
+                       └── REJECTED (terminal)
+                ┘   ┘   ┘   ┘   ┘
+              CANCELLED  (terminal — from any pre-PICKED_UP state)
+```
+
+- **DRAFT** is the initial state when a customer places a cart. The
+  order is invisible to the restaurant. The customer sees a "Resume
+  checkout" affordance until they pick a payment method.
+- **PENDING** means the customer has committed to a payment method
+  (cash chosen, or card charged successfully) and the restaurant can
+  now accept/reject. The transition `DRAFT → PENDING` is fired by the
+  consumer for `payment.pending` (cash) or `payment.completed` (card).
+- **CANCELLED** can come from the customer (DRAFT or PENDING), the
+  system on `payment.failed`, or the restaurant up through READY.
+
+Publishes `order.placed` (on `DRAFT → PENDING`, not on draft creation),
+`order.accepted`, `order.rejected`, `order.ready`, `order.picked_up`,
+`order.delivered`, `order.cancelled`, `delivery.assigned`. Consumes
+`payment.pending`, `payment.completed`, `payment.failed`.
 
 **Payment Service** — Go (Gin) on Postgres. Mock card processor: any
 card number ending in `0000` is declined, everything else clears. Cash
-on delivery is supported as a separate flow that stays `PENDING` until
-the rider calls `/payments/by-order/{id}/collect`. Publishes
-`payment.pending`, `payment.completed`, `payment.failed`. Consumes
-`order.cancelled` (refund hook — currently a no-op log line).
+on delivery is supported as a separate flow. The state machine is
+small and mostly fan-shaped:
+
+```
+                  ┌── COMPLETED   (terminal — card cleared)
+   (new payment) ─┼── FAILED      (terminal — card declined)
+                  └── PENDING ─── COMPLETED   (cash collected by rider)
+```
+
+- Card path goes straight to `COMPLETED` or `FAILED` — it never sits
+  in `PENDING`.
+- Cash path is the only one that dwells in `PENDING`; the rider flips
+  it to `COMPLETED` via `POST /payments/by-order/{id}/collect`.
+
+Publishes `payment.pending` (cash created), `payment.completed`
+(card success or cash collected), `payment.failed` (card declined).
+Consumes `order.rejected`, `order.cancelled` (refund hook — currently
+a no-op log line).
 
 **Frontend** — Single static SPA (`public/app.js` + `index.html`)
 served by NGINX. One UI for all three roles, picked at registration

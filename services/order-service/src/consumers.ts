@@ -12,6 +12,11 @@ interface PaymentCompletedData {
   order_id: string;
 }
 
+interface PaymentPendingData {
+  payment_id: string;
+  order_id: string;
+}
+
 interface PaymentFailedData {
   payment_id: string;
   order_id: string;
@@ -33,40 +38,56 @@ export async function startConsumers(
   pool: Pool,
   service: OrdersService,
 ): Promise<void> {
-  await rabbit.subscribe(["payment.completed", "payment.failed"], async (env: Envelope) => {
-    if (await alreadyProcessed(pool, env.event_id)) {
-      logger.debug({ event_id: env.event_id }, "duplicate event, skipped");
-      return;
-    }
-
-    if (env.event_type === "payment.completed") {
-      const d = env.data as PaymentCompletedData;
-      await service.markPaid(d.order_id);
-      logger.info({ order_id: d.order_id, payment_id: d.payment_id }, "order marked paid");
-      return;
-    }
-
-    if (env.event_type === "payment.failed") {
-      const d = env.data as PaymentFailedData;
-      try {
-        await service.transitionStatus(
-          d.order_id,
-          "CANCELLED",
-          { kind: "system" },
-          { reason: d.reason },
-        );
-        logger.info({ order_id: d.order_id, payment_id: d.payment_id }, "order cancelled");
-      } catch (e) {
-        // 409 — order is already past PENDING; nothing to do. Anything else re-throws → retry.
-        if (e instanceof HttpError && e.status === 409) {
-          logger.info(
-            { order_id: d.order_id, payment_id: d.payment_id },
-            "payment failed but order not cancellable; ignoring",
-          );
-          return;
-        }
-        throw e;
+  await rabbit.subscribe(
+    ["payment.pending", "payment.completed", "payment.failed"],
+    async (env: Envelope) => {
+      if (await alreadyProcessed(pool, env.event_id)) {
+        logger.debug({ event_id: env.event_id }, "duplicate event, skipped");
+        return;
       }
-    }
-  });
+
+      if (env.event_type === "payment.pending") {
+        // Cash on delivery: customer committed to a payment method but
+        // the money isn't in yet. The order leaves DRAFT and becomes
+        // visible to the restaurant.
+        const d = env.data as PaymentPendingData;
+        await service.confirmDraft(d.order_id);
+        logger.info({ order_id: d.order_id, payment_id: d.payment_id }, "order confirmed (cash)");
+        return;
+      }
+
+      if (env.event_type === "payment.completed") {
+        const d = env.data as PaymentCompletedData;
+        // Card success path — confirm draft (no-op if cash already
+        // promoted) before marking paid.
+        await service.confirmDraft(d.order_id);
+        await service.markPaid(d.order_id);
+        logger.info({ order_id: d.order_id, payment_id: d.payment_id }, "order marked paid");
+        return;
+      }
+
+      if (env.event_type === "payment.failed") {
+        const d = env.data as PaymentFailedData;
+        try {
+          await service.transitionStatus(
+            d.order_id,
+            "CANCELLED",
+            { kind: "system" },
+            { reason: d.reason },
+          );
+          logger.info({ order_id: d.order_id, payment_id: d.payment_id }, "order cancelled");
+        } catch (e) {
+          // 409 — order is already past DRAFT/PENDING; nothing to do.
+          if (e instanceof HttpError && e.status === 409) {
+            logger.info(
+              { order_id: d.order_id, payment_id: d.payment_id },
+              "payment failed but order not cancellable; ignoring",
+            );
+            return;
+          }
+          throw e;
+        }
+      }
+    },
+  );
 }

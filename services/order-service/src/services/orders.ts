@@ -74,21 +74,24 @@ export class OrdersService {
       delivery_user_id: order.delivery_user_id,
       updated_at: new Date().toISOString(),
     });
-    const targets = new Set<string>([
-      customerOrdersChannel(order.customer_id),
-      restaurantOrdersChannel(order.restaurant_id),
-    ]);
-    if (order.delivery_user_id) {
-      targets.add(deliveryOrdersChannel(order.delivery_user_id));
-    }
-    // The lobby reflects what's claimable / has been claimed. Any of these
-    // events changes the lobby's view, so push to it.
-    if (
-      eventType === "order.ready" ||
-      eventType === "delivery.assigned" ||
-      eventType === "order.cancelled"
-    ) {
-      targets.add(DELIVERY_LOBBY_CHANNEL);
+    const targets = new Set<string>([customerOrdersChannel(order.customer_id)]);
+    // DRAFT orders are still in checkout — restaurants and riders should
+    // not learn about them yet. Once confirmDraft fires, the next event
+    // is published with status=PENDING and the restaurant SSE picks it up.
+    if (order.status !== "DRAFT") {
+      targets.add(restaurantOrdersChannel(order.restaurant_id));
+      if (order.delivery_user_id) {
+        targets.add(deliveryOrdersChannel(order.delivery_user_id));
+      }
+      // The lobby reflects what's claimable / has been claimed. Any of these
+      // events changes the lobby's view, so push to it.
+      if (
+        eventType === "order.ready" ||
+        eventType === "delivery.assigned" ||
+        eventType === "order.cancelled"
+      ) {
+        targets.add(DELIVERY_LOBBY_CHANNEL);
+      }
     }
     try {
       await Promise.all([...targets].map((ch) => this.redis.publish(ch, payload)));
@@ -144,24 +147,45 @@ export class OrdersService {
       deliveryLongitude: input.deliveryLongitude ?? null,
     });
 
+    // DRAFT — only the customer should see it appear in their list. The
+    // rabbit `order.placed` event is delayed until confirmDraft (i.e. when
+    // payment is actually initiated), so external consumers and the
+    // restaurant don't see the order until it's real.
+    await this.fanoutOrder("order.draft", order);
+
+    return order;
+  }
+
+  // confirmDraft transitions a DRAFT order to PENDING. Triggered by the
+  // payment-service event consumer when a payment.pending (cash) or
+  // payment.completed (card success) message arrives. No-op if the order
+  // is already past DRAFT (idempotent — both events can fire for the same
+  // order in unusual orderings).
+  async confirmDraft(orderId: string): Promise<OrderRow | null> {
+    const o = await this.repo.findById(orderId);
+    if (!o) return null;
+    if (o.status !== "DRAFT") return o;
+
+    const updated = await this.repo.setStatus(orderId, "PENDING");
+    if (!updated) return null;
+
     await this.rabbit.publish("order.placed", {
-      order_id: order.id,
-      customer_id: order.customer_id,
-      restaurant_id: order.restaurant_id,
-      items: order.items.map((i) => ({
+      order_id: updated.id,
+      customer_id: updated.customer_id,
+      restaurant_id: updated.restaurant_id,
+      items: updated.items.map((i) => ({
         menu_item_id: i.menu_item_id,
         name: i.name,
         quantity: i.quantity,
         unit_price: Number(minorToDecimal(i.unit_price)),
       })),
-      subtotal: Number(minorToDecimal(order.subtotal_minor)),
-      delivery_fee: Number(minorToDecimal(order.delivery_fee_minor)),
-      total: Number(minorToDecimal(order.total_minor)),
-      delivery_address: order.delivery_address,
+      subtotal: Number(minorToDecimal(updated.subtotal_minor)),
+      delivery_fee: Number(minorToDecimal(updated.delivery_fee_minor)),
+      total: Number(minorToDecimal(updated.total_minor)),
+      delivery_address: updated.delivery_address,
     });
-    await this.fanoutOrder("order.placed", order);
-
-    return order;
+    await this.fanoutOrder("order.placed", updated);
+    return updated;
   }
 
   async getOrder(orderId: string, actor: Actor): Promise<OrderRow> {

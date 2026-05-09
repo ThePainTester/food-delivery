@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS orders (
     delivery_fee_minor BIGINT NOT NULL,
     total_minor        BIGINT NOT NULL,
     status             TEXT NOT NULL CHECK (status IN (
-        'PENDING','ACCEPTED','REJECTED','PREPARING','READY',
+        'DRAFT','PENDING','ACCEPTED','REJECTED','PREPARING','READY',
         'PICKED_UP','DELIVERED','CANCELLED'
     )),
     paid               BOOLEAN NOT NULL DEFAULT FALSE,

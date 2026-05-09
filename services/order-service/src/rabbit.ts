@@ -18,6 +18,7 @@ export type EventType =
   | "order.picked_up"
   | "order.delivered"
   | "order.cancelled"
+  | "payment.pending"
   | "payment.completed"
   | "payment.failed"
   | "delivery.assigned";

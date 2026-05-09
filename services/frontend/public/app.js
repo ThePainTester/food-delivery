@@ -308,7 +308,7 @@ async function viewCustomerRestaurant(id) {
           items: lines.map(l => ({ menu_item_id: l.item.id, quantity: l.qty })),
         });
         cart.items = {}; cart.restaurantId = null; cart.destination = null;
-        flash('Order placed — please complete payment', 'ok');
+        flash('Cart saved — choose a payment method to place your order', 'ok');
         location.hash = `#/c/checkout/${order.id}`;
       } catch (err) { flash(err.message); }
     };
@@ -371,8 +371,10 @@ async function viewCustomerCheckout(orderId) {
   try { order = await API.getOrder(orderId); }
   catch (err) { flash(err.message); return; }
 
-  if (order.paid) {
-    flash('Already paid', 'ok');
+  if (order.status !== 'DRAFT') {
+    // Once a payment method has been chosen the order has left DRAFT and
+    // checkout is no longer the right page — bounce to the order detail.
+    flash(order.paid ? 'Already paid' : 'Order already placed', 'ok');
     location.hash = `#/c/orders/${orderId}`;
     return;
   }
@@ -445,6 +447,21 @@ async function viewCustomerOrders() {
 }
 
 function orderRow(o) {
+  if (o.status === 'DRAFT') {
+    // Customer left checkout without choosing a payment method. Surface
+    // the order with a high-visibility prompt to resume.
+    return `<div class="block bg-amber-50 border border-amber-200 p-3 rounded shadow">
+      <div class="flex justify-between items-center">
+        <div>
+          <div class="font-medium">Order ${o.id.slice(0, 8)}…</div>
+          <div class="text-sm text-slate-500">${new Date(o.created_at).toLocaleString()}</div>
+          <div class="text-xs text-amber-800 mt-1 font-medium">Awaiting payment — your order isn't placed yet.</div>
+        </div>
+        <div class="text-right text-sm text-slate-600">${fmtMoney(o.total)}</div>
+      </div>
+      <a href="#/c/checkout/${o.id}" class="block mt-2 w-full bg-emerald-600 text-white text-center py-2 rounded text-sm">Resume checkout</a>
+    </div>`;
+  }
   return `<a href="#/c/orders/${o.id}" class="block bg-white p-3 rounded shadow flex justify-between items-center">
     <div>
       <div class="font-medium">Order ${o.id.slice(0, 8)}…</div>
@@ -460,6 +477,9 @@ function orderRow(o) {
 const STATUS_FLOW = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'PICKED_UP', 'DELIVERED'];
 
 function statusTimeline(status) {
+  if (status === 'DRAFT') {
+    return `<div class="text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-sm">Awaiting payment — choose a method to place the order.</div>`;
+  }
   if (status === 'REJECTED' || status === 'CANCELLED') {
     return `<div class="text-red-700 font-medium">${status}</div>`;
   }
@@ -540,7 +560,8 @@ async function viewCustomerOrder(id) {
       const paidLabel = o.paid
         ? (payment && payment.method === 'cash' ? 'paid (cash collected)' : 'yes')
         : (payment && payment.method === 'cash' && payment.status === 'PENDING' ? 'cash on delivery' : 'no');
-      const needsCheckout = !payment && o.status === 'PENDING';
+      const isDraft = o.status === 'DRAFT';
+      const canCancel = isDraft || o.status === 'PENDING';
       document.getElementById('order-summary').innerHTML = `
         <h2 class="font-semibold mb-2">Items</h2>
         <ul class="text-sm space-y-1">${itemsHtml}</ul>
@@ -550,8 +571,8 @@ async function viewCustomerOrder(id) {
           <div class="flex justify-between font-medium"><span>Total</span><span>${fmtMoney(o.total)}</span></div>
           <div class="flex justify-between text-slate-600"><span>Payment</span><span>${paidLabel}</span></div>
         </div>
-        ${needsCheckout ? `<a href="#/c/checkout/${o.id}" class="block text-center mt-3 w-full bg-emerald-600 text-white py-2 rounded text-sm">Pay now</a>` : ''}
-        ${o.status === 'PENDING' ? `<button id="cancel" class="mt-3 w-full bg-red-600 text-white py-2 rounded text-sm">Cancel order</button>` : ''}`;
+        ${isDraft ? `<a href="#/c/checkout/${o.id}" class="block text-center mt-3 w-full bg-emerald-600 text-white py-2 rounded text-sm">Resume checkout</a>` : ''}
+        ${canCancel ? `<button id="cancel" class="mt-3 w-full bg-red-600 text-white py-2 rounded text-sm">Cancel order</button>` : ''}`;
       const cancelBtn = document.getElementById('cancel');
       if (cancelBtn) cancelBtn.onclick = async () => {
         try { await API.setOrderStatus(o.id, 'CANCELLED'); refresh(); }

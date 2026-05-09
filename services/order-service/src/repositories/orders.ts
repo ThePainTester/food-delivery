@@ -58,7 +58,7 @@ export class OrdersRepo {
           id, customer_id, restaurant_id, items,
           subtotal_minor, delivery_fee_minor, total_minor,
           status, delivery_address, delivery_latitude, delivery_longitude
-       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,'PENDING',$8,$9,$10)
+       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,'DRAFT',$8,$9,$10)
        RETURNING ${RETURNING}`,
       [
         input.id,
@@ -109,8 +109,11 @@ export class OrdersRepo {
   }
 
   async listByRestaurant(restaurantId: string): Promise<OrderRow[]> {
+    // DRAFT orders are still in customer checkout — invisible to restaurants.
     const { rows } = await this.pool.query<OrderRow>(
-      `SELECT ${RETURNING} FROM orders WHERE restaurant_id = $1 ORDER BY created_at DESC`,
+      `SELECT ${RETURNING} FROM orders
+        WHERE restaurant_id = $1 AND status <> 'DRAFT'
+        ORDER BY created_at DESC`,
       [restaurantId],
     );
     return rows;
