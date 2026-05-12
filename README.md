@@ -278,9 +278,7 @@ things: esbuild bundles `src/app.js` and its deps — `leaflet` and
 Leaflet's marker images emitted alongside as hashed assets), and the
 Tailwind v4 CLI compiles `src/styles.css` (Tailwind + Leaflet's stylesheet)
 into a tree-shaken `dist/styles.css`. The Dockerfile runs this; the NGINX
-image serves `public/index.html` + `dist/*`. No third-party CDNs at runtime
-(the in-browser Tailwind JIT is gone — that build is explicitly not for
-production); only OpenStreetMap *tiles* are fetched from outside.
+image serves `public/index.html` + `dist/*`.
 
 ### Infrastructure
 
@@ -327,25 +325,6 @@ new service can adopt it with the shared `ChannelStreamHub` primitive.
 | order-service | `GET /orders/stream` | Customer order list / order detail / restaurant orders / rider's active deliveries | Order-state changes (`order.placed`, `order.accepted`, `order.ready`, `delivery.assigned`, `order.picked_up`, `order.delivered`, `order.cancelled`, `order.paid`) |
 | order-service | `GET /orders/{id}/location/stream` | Customer's live-tracking map | Driver location fixes for one order |
 | dispatch-service | `GET /dispatch/drivers/stream` | Driver dashboard | Push offers (`{driverId, orderId, pickup, expires_in_s}`) and cancellations (`{type: cancelled}`) |
-
-The browser's native `EventSource` can't send an `Authorization` header, so
-the SPA consumes these streams over `fetch()` instead — via
-[`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source)
-(one of the frontend's bundled deps) — which lets the JWT ride in the
-`Authorization: Bearer …` header like every other request (no token in the
-URL, so nothing leaks into access logs, history, or `Referer`). It also keeps
-the connection open when the tab is backgrounded (`openWhenHidden`) so a
-minimised driver still receives offers, and reconnects with backoff on a
-dropped connection.
-
-On the wire: each stream response sets `Content-Type: text/event-stream`,
-`Cache-Control: no-cache, no-transform`, and `X-Accel-Buffering: no` (the last
-tells nginx to stream this response unbuffered — set per-response by the
-handler, so it touches only the SSE routes, not the JSON API), and the server
-writes a `:hb` comment line every 25 s. The 25 s heartbeat sits comfortably
-under nginx's default 60 s `proxy_read_timeout`, so idle streams aren't
-reaped — no Ingress-wide buffering/timeout annotations are needed. Traefik
-(Compose) streams responses unbuffered by default and needs no config either.
 
 ### Redis Pub/Sub as the fan-out bus
 
