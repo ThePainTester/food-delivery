@@ -11,7 +11,7 @@ Per-environment overlays over a shared `docker-compose.yml` base.
 | `docker-compose.staging.yml` | Pulls `:staging` images from a registry, exposes only application services + the RabbitMQ UI, `restart: unless-stopped`. |
 | `docker-compose.prod.yml` | Pulls pinned `:${IMAGE_TAG}` images, no host port exposure on data stores or the rabbit UI, resource limits + log rotation, `restart: always`. |
 | `.env.example` | Template — copy to `.env.dev` / `.env.staging` / `.env.prod`. |
-| `scripts/gen-keys.sh` | One-shot RS256 keypair for User Service signing. Writes `jwt/jwt.key` + `jwt/jwt.pub`, both mounted read-only into every service. |
+| `scripts/gen-keys.sh` | One-shot RS256 signing key for User Service. Writes `jwt/jwt.key`, mounted read-only into user-service only — the other services verify tokens via User Service's `/.well-known/jwks.json` endpoint. |
 
 ## Topology
 

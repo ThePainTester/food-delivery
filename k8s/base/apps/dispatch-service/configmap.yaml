@@ -6,7 +6,7 @@ data:
   PORT: "8080"
   REDIS_URL: redis://dispatch-cache:6379
   JWT_ISSUER: user-service
-  JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+  JWKS_URL: http://user-service:8080/.well-known/jwks.json
   OFFER_TIMEOUT_MS: "12000"
   DISPATCH_LOCK_TTL_S: "60"
   SEARCH_RADIUS_M: "3000"

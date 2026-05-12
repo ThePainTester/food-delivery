@@ -1,6 +1,7 @@
 import express from "express";
 import pinoHttp from "pino-http";
 
+import { JwtConfig } from "./auth/jwt";
 import { RestaurantClient } from "./clients/restaurants";
 import { Config } from "./config";
 import { errorHandler } from "./errors";
@@ -15,20 +16,19 @@ import { OrdersService } from "./services/orders";
 
 interface Wired {
   cfg: Config;
+  jwt: JwtConfig;
   orders: OrdersService;
   location: LocationService;
   hub: ChannelStreamHub;
   restaurants: RestaurantClient;
 }
 
-export function buildApp({ cfg, orders, location, hub, restaurants }: Wired): express.Express {
+export function buildApp({ jwt, orders, location, hub, restaurants }: Wired): express.Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(pinoHttp({ logger }));
   app.use(metricsMiddleware);
   app.use(metricsRouter());
-
-  const jwt = { publicKey: cfg.jwtPublicKey, issuer: cfg.jwtIssuer };
 
   app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
   // Stream router goes first so GET /orders/stream matches before

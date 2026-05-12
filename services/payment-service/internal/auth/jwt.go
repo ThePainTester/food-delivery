@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/rsa"
 	"errors"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -14,16 +13,12 @@ type Claims struct {
 }
 
 type Verifier struct {
-	pub    *rsa.PublicKey
+	jwks   *JWKSClient
 	issuer string
 }
 
-func NewVerifier(pubPEM []byte, issuer string) (*Verifier, error) {
-	pub, err := jwt.ParseRSAPublicKeyFromPEM(pubPEM)
-	if err != nil {
-		return nil, err
-	}
-	return &Verifier{pub: pub, issuer: issuer}, nil
+func NewVerifier(jwks *JWKSClient, issuer string) *Verifier {
+	return &Verifier{jwks: jwks, issuer: issuer}
 }
 
 func (v *Verifier) Parse(tokenStr string) (*Claims, error) {
@@ -32,7 +27,8 @@ func (v *Verifier) Parse(tokenStr string) (*Claims, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, errors.New("unexpected signing method")
 		}
-		return v.pub, nil
+		kid, _ := t.Header["kid"].(string)
+		return v.jwks.Key(kid)
 	}, jwt.WithIssuer(v.issuer))
 	if err != nil {
 		return nil, err

@@ -8,7 +8,7 @@ paths without random flakiness.
 - `PORT` (default 8080)
 - `DATABASE_URL`
 - `RABBIT_URL`
-- `JWT_PUBLIC_KEY_PATH` — same RSA public key as User Service
+- `JWKS_URL` — User Service's JWKS endpoint, e.g. `http://user-service:8080/.well-known/jwks.json`
 - `JWT_ISSUER` (default `user-service`)
 - `DEFAULT_PAYMENT_METHOD` (default `mock-card`)
 

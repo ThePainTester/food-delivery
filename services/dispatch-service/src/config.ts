@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { v4 as uuidv4 } from "uuid";
 
 function req(name: string): string {
@@ -12,7 +11,7 @@ export interface Config {
   databaseUrl: string;
   redisUrl: string;
   rabbitUrl: string;
-  jwtPublicKey: Buffer;
+  jwksUrl: string;
   jwtIssuer: string;
   instanceId: string;
   offerTimeoutMs: number;
@@ -27,7 +26,7 @@ export function loadConfig(): Config {
     databaseUrl: req("DATABASE_URL"),
     redisUrl: req("REDIS_URL"),
     rabbitUrl: req("RABBIT_URL"),
-    jwtPublicKey: fs.readFileSync(req("JWT_PUBLIC_KEY_PATH")),
+    jwksUrl: req("JWKS_URL"),
     jwtIssuer: process.env.JWT_ISSUER ?? "user-service",
     instanceId: process.env.HOSTNAME ?? `dispatch-${uuidv4()}`,
     offerTimeoutMs: Number(process.env.OFFER_TIMEOUT_MS ?? 12_000),

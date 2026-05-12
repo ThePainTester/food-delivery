@@ -1,7 +1,7 @@
 import { Router } from "express";
 import Redis from "ioredis";
 
-import { Principal, requireAuth, requireRole } from "../auth/jwt";
+import { JwtConfig, Principal, requireAuth, requireRole } from "../auth/jwt";
 import { logger } from "../logger";
 import { dispatchAssignments } from "../observability";
 import { Rabbit } from "../rabbit";
@@ -16,7 +16,7 @@ interface Deps {
   repo: AssignmentsRepo;
   redis: Redis;
   rabbit: Rabbit;
-  jwt: { publicKey: Buffer; issuer: string };
+  jwt: JwtConfig;
 }
 
 export function assignmentsRouter(deps: Deps): Router {

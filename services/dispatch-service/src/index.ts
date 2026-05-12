@@ -3,6 +3,7 @@
 import { startTracing, shutdownTracing } from "./observability";
 startTracing();
 
+import { JwksCache } from "./auth/jwks";
 import { loadConfig } from "./config";
 import { startConsumers } from "./consumers";
 import { createPool } from "./db";
@@ -25,6 +26,9 @@ async function main() {
 
   const rabbit = new Rabbit(cfg.rabbitUrl, "dispatch-service", "dispatch");
   await rabbit.connect();
+
+  const jwks = new JwksCache(cfg.jwksUrl);
+  await jwks.init();
 
   const repo = new AssignmentsRepo(pool);
   const hub = new ChannelStreamHub(redis);
@@ -59,7 +63,7 @@ async function main() {
 
   await startConsumers(rabbit, redis, dispatch, cfg);
 
-  const app = buildApp({ cfg, redis, rabbit, repo, hub });
+  const app = buildApp({ cfg, jwt: { jwks, issuer: cfg.jwtIssuer }, redis, rabbit, repo, hub });
   const server = app.listen(cfg.port, () => {
     logger.info({ port: cfg.port, instance: cfg.instanceId }, "dispatch-service listening");
   });

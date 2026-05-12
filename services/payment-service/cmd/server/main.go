@@ -5,6 +5,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/food-delivery/payment-service/internal/auth"
 	"github.com/food-delivery/payment-service/internal/config"
@@ -48,10 +49,11 @@ func main() {
 	}
 	defer rabbit.Close()
 
-	verifier, err := auth.NewVerifier(cfg.JWTPublicKey, cfg.JWTIssuer)
-	if err != nil {
-		log.Fatalf("jwt: %v", err)
+	jwks := auth.NewJWKSClient(cfg.JWKSURL)
+	if err := jwks.Init(ctx, 30, 2*time.Second); err != nil {
+		log.Fatalf("jwks: %v", err)
 	}
+	verifier := auth.NewVerifier(jwks, cfg.JWTIssuer)
 
 	repo := repositories.New(pool)
 	svc := services.New(repo, rabbit, cfg.DefaultPaymentMethod)

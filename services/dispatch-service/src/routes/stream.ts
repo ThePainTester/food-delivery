@@ -1,13 +1,13 @@
 import { Router } from "express";
 
-import { Principal, requireAuth, requireRole } from "../auth/jwt";
+import { JwtConfig, Principal, requireAuth, requireRole } from "../auth/jwt";
 import { logger } from "../logger";
 import { driverOffersChannel } from "../redis";
 import { ChannelStreamHub } from "../stream-hub";
 
 interface Deps {
   hub: ChannelStreamHub;
-  jwt: { publicKey: Buffer; issuer: string };
+  jwt: JwtConfig;
 }
 
 // SSE for the driver UI. Subscribes the connection to the driver's

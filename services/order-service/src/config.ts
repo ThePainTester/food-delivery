@@ -1,5 +1,3 @@
-import fs from "node:fs";
-
 function req(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`missing required env var ${name}`);
@@ -11,7 +9,7 @@ export interface Config {
   databaseUrl: string;
   redisUrl: string;
   rabbitUrl: string;
-  jwtPublicKey: Buffer;
+  jwksUrl: string;
   jwtIssuer: string;
   restaurantServiceUrl: string;
   deliveryFeeMinor: number;
@@ -24,7 +22,7 @@ export function loadConfig(): Config {
     databaseUrl: req("DATABASE_URL"),
     redisUrl: req("REDIS_URL"),
     rabbitUrl: req("RABBIT_URL"),
-    jwtPublicKey: fs.readFileSync(req("JWT_PUBLIC_KEY_PATH")),
+    jwksUrl: req("JWKS_URL"),
     jwtIssuer: process.env.JWT_ISSUER ?? "user-service",
     restaurantServiceUrl: req("RESTAURANT_SERVICE_URL"),
     deliveryFeeMinor: Number(process.env.DELIVERY_FEE_MINOR ?? 3000),

@@ -1,12 +1,12 @@
 # Restaurant Service
 
-Python 3.12 + FastAPI + MongoDB (Motor). Verifies JWTs issued by User Service using the shared RS256 public key.
+Python 3.12 + FastAPI + MongoDB (Motor). Verifies JWTs issued by User Service against its JWKS endpoint (keys fetched and cached via PyJWT's `PyJWKClient`).
 
 ## Env
 - `PORT` (default 8080)
 - `MONGO_URL` — e.g. `mongodb://mongo:27017`
 - `MONGO_DB` (default `restaurants`)
-- `JWT_PUBLIC_KEY_PATH` — same public key used by User Service
+- `JWKS_URL` — User Service's JWKS endpoint, e.g. `http://user-service:8080/.well-known/jwks.json`
 - `JWT_ISSUER` (default `user-service`)
 
 ## Endpoints

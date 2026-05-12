@@ -2,6 +2,7 @@ import express from "express";
 import Redis from "ioredis";
 import pinoHttp from "pino-http";
 
+import { JwtConfig } from "./auth/jwt";
 import { Config } from "./config";
 import { errorHandler } from "./errors";
 import { logger } from "./logger";
@@ -15,20 +16,19 @@ import { ChannelStreamHub } from "./stream-hub";
 
 interface Wired {
   cfg: Config;
+  jwt: JwtConfig;
   redis: Redis;
   rabbit: Rabbit;
   repo: AssignmentsRepo;
   hub: ChannelStreamHub;
 }
 
-export function buildApp({ cfg, redis, rabbit, repo, hub }: Wired): express.Express {
+export function buildApp({ jwt, redis, rabbit, repo, hub }: Wired): express.Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(pinoHttp({ logger }));
   app.use(metricsMiddleware);
   app.use(metricsRouter());
-
-  const jwt = { publicKey: cfg.jwtPublicKey, issuer: cfg.jwtIssuer };
 
   app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
 

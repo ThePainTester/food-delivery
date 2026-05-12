@@ -9,7 +9,7 @@ type Config struct {
 	Port                 string
 	DatabaseURL          string
 	RabbitURL            string
-	JWTPublicKey         []byte
+	JWKSURL              string
 	JWTIssuer            string
 	DefaultPaymentMethod string
 }
@@ -19,15 +19,10 @@ func Load() (*Config, error) {
 		Port:                 getEnv("PORT", "8080"),
 		DatabaseURL:          mustEnv("DATABASE_URL"),
 		RabbitURL:            mustEnv("RABBIT_URL"),
+		JWKSURL:              mustEnv("JWKS_URL"),
 		JWTIssuer:            getEnv("JWT_ISSUER", "user-service"),
 		DefaultPaymentMethod: getEnv("DEFAULT_PAYMENT_METHOD", "mock-card"),
 	}
-	pubPath := mustEnv("JWT_PUBLIC_KEY_PATH")
-	pub, err := os.ReadFile(pubPath)
-	if err != nil {
-		return nil, fmt.Errorf("read public key: %w", err)
-	}
-	cfg.JWTPublicKey = pub
 	return cfg, nil
 }
 

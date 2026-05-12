@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { Principal, requireAuth } from "../auth/jwt";
+import { JwtConfig, Principal, requireAuth } from "../auth/jwt";
 import { badRequest } from "../errors";
 import { logger } from "../logger";
 import { locationChannel } from "../redis";
@@ -24,7 +24,7 @@ const userActor = (p: Principal): Actor => ({
 interface Deps {
   service: LocationService;
   hub: ChannelStreamHub;
-  jwt: { publicKey: Buffer; issuer: string };
+  jwt: JwtConfig;
 }
 
 export function locationRouter(deps: Deps): Router {

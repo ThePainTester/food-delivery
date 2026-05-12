@@ -2,7 +2,7 @@ import { Router } from "express";
 import Redis from "ioredis";
 import { z } from "zod";
 
-import { Principal, requireAuth, requireRole } from "../auth/jwt";
+import { JwtConfig, Principal, requireAuth, requireRole } from "../auth/jwt";
 import { badRequest } from "../errors";
 import {
   DRIVERS_AVAILABLE_GEO,
@@ -11,7 +11,7 @@ import {
 
 interface Deps {
   redis: Redis;
-  jwt: { publicKey: Buffer; issuer: string };
+  jwt: JwtConfig;
 }
 
 const heartbeatSchema = z.object({

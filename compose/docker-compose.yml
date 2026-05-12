@@ -154,7 +154,6 @@ services:
       PORT: "8080"
       DATABASE_URL: postgres://${USERS_DB_USER}:${USERS_DB_PASSWORD}@users-db:5432/users?sslmode=disable
       JWT_PRIVATE_KEY_PATH: /run/jwt/jwt.key
-      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
       JWT_ISSUER: ${JWT_ISSUER:-user-service}
     volumes:
       - *jwt-volume
@@ -178,17 +177,17 @@ services:
       PORT: "8080"
       MONGO_URL: mongodb://${RESTAURANTS_DB_USER}:${RESTAURANTS_DB_PASSWORD}@restaurants-db:27017/${RESTAURANTS_DB_NAME:-restaurants}?authSource=admin
       MONGO_DB: ${RESTAURANTS_DB_NAME:-restaurants}
-      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWKS_URL: http://user-service:8080/.well-known/jwks.json
       JWT_ISSUER: ${JWT_ISSUER:-user-service}
       # The gateway strips /api before forwarding; this tells FastAPI it's
       # behind that prefix so 307 trailing-slash redirects keep /api in the
       # Location header.
       ROOT_PATH: /api
-    volumes:
-      - *jwt-volume
     depends_on:
       restaurants-db:
         condition: service_healthy
+      user-service:
+        condition: service_started
     networks:
       - app-net
       - rabbit-net
@@ -207,13 +206,11 @@ services:
       DATABASE_URL: postgres://${ORDERS_DB_USER}:${ORDERS_DB_PASSWORD}@orders-db:5432/orders?sslmode=disable
       REDIS_URL: redis://orders-cache:6379
       RABBIT_URL: amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@rabbitmq:5672
-      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWKS_URL: http://user-service:8080/.well-known/jwks.json
       JWT_ISSUER: ${JWT_ISSUER:-user-service}
       RESTAURANT_SERVICE_URL: http://restaurant-service:8080
       DELIVERY_FEE_MINOR: ${DELIVERY_FEE_MINOR:-3000}
       LOCATION_TTL_SECONDS: ${LOCATION_TTL_SECONDS:-120}
-    volumes:
-      - *jwt-volume
     depends_on:
       orders-db:
         condition: service_healthy
@@ -222,6 +219,8 @@ services:
       rabbitmq:
         condition: service_healthy
       restaurant-service:
+        condition: service_started
+      user-service:
         condition: service_started
     networks:
       - app-net
@@ -241,14 +240,12 @@ services:
       DATABASE_URL: postgres://${DISPATCH_DB_USER}:${DISPATCH_DB_PASSWORD}@dispatch-db:5432/dispatch?sslmode=disable
       REDIS_URL: redis://dispatch-cache:6379
       RABBIT_URL: amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@rabbitmq:5672
-      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWKS_URL: http://user-service:8080/.well-known/jwks.json
       JWT_ISSUER: ${JWT_ISSUER:-user-service}
       OFFER_TIMEOUT_MS: ${OFFER_TIMEOUT_MS:-12000}
       DISPATCH_LOCK_TTL_S: ${DISPATCH_LOCK_TTL_S:-60}
       SEARCH_RADIUS_M: ${SEARCH_RADIUS_M:-3000}
       HEARTBEAT_STALE_MS: ${HEARTBEAT_STALE_MS:-30000}
-    volumes:
-      - *jwt-volume
     depends_on:
       dispatch-db:
         condition: service_healthy
@@ -256,6 +253,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      user-service:
+        condition: service_started
     networks:
       - app-net
       - rabbit-net
@@ -273,16 +272,16 @@ services:
       PORT: "8080"
       DATABASE_URL: postgres://${PAYMENTS_DB_USER}:${PAYMENTS_DB_PASSWORD}@payments-db:5432/payments?sslmode=disable
       RABBIT_URL: amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@rabbitmq:5672
-      JWT_PUBLIC_KEY_PATH: /run/jwt/jwt.pub
+      JWKS_URL: http://user-service:8080/.well-known/jwks.json
       JWT_ISSUER: ${JWT_ISSUER:-user-service}
       DEFAULT_PAYMENT_METHOD: ${DEFAULT_PAYMENT_METHOD:-mock-card}
-    volumes:
-      - *jwt-volume
     depends_on:
       payments-db:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      user-service:
+        condition: service_started
     networks:
       - app-net
       - rabbit-net

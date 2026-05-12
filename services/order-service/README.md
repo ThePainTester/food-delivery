@@ -1,14 +1,14 @@
 # Order Service
 
 Node 20 + TypeScript + Express + Postgres (pg) + Redis (ioredis) + RabbitMQ (amqplib).
-Verifies JWTs (RS256) using the shared public key issued by User Service.
+Verifies JWTs (RS256) against User Service's JWKS endpoint (keys fetched and cached locally).
 
 ## Env
 - `PORT` (default 8080)
 - `DATABASE_URL` — `postgres://...`
 - `REDIS_URL` — `redis://redis:6379`
 - `RABBIT_URL` — `amqp://guest:guest@rabbitmq:5672`
-- `JWT_PUBLIC_KEY_PATH` — same public key used by User Service
+- `JWKS_URL` — User Service's JWKS endpoint, e.g. `http://user-service:8080/.well-known/jwks.json`
 - `JWT_ISSUER` (default `user-service`)
 - `RESTAURANT_SERVICE_URL` — e.g. `http://restaurant-service:8080`
 - `DELIVERY_FEE_MINOR` (default 3000)

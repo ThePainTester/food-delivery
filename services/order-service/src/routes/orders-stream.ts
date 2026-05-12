@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import { Principal, requireAuth } from "../auth/jwt";
+import { JwtConfig, Principal, requireAuth } from "../auth/jwt";
 import { RestaurantClient } from "../clients/restaurants";
 import { badRequest, forbidden, notFound } from "../errors";
 import { logger } from "../logger";
@@ -14,7 +14,7 @@ import { ChannelStreamHub } from "../services/channel-stream-hub";
 interface Deps {
   hub: ChannelStreamHub;
   restaurants: RestaurantClient;
-  jwt: { publicKey: Buffer; issuer: string };
+  jwt: JwtConfig;
 }
 
 // SSE stream for order-state changes. Channels subscribed to depend on the

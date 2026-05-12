@@ -12,7 +12,6 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PRIVKEY_MANIFEST="$REPO_ROOT/k8s/base/secrets/jwt-privkey.yaml"
-PUBKEY_MANIFEST="$REPO_ROOT/k8s/base/jwt-pubkey.yaml"
 INFRA_DIR="$REPO_ROOT/k8s/base/infra"
 
 # Random URL-safe-ish password — 24 bytes of entropy, base64'd.
@@ -33,27 +32,23 @@ if [ "$NS" != "food-delivery-dev" ]; then
     --dry-run=client -o yaml | kubectl apply -f -
 fi
 
-# Generate the JWT keypair manifests if missing. Both files are gitignored;
-# templates live alongside as *.example.yaml.
-if [ ! -f "$PRIVKEY_MANIFEST" ] || [ ! -f "$PUBKEY_MANIFEST" ]; then
-  echo "Generating JWT RS256 keypair manifests..."
+# Generate the JWT private-key Secret manifest if missing. Only user-service
+# holds the key (it signs tokens and publishes the public key at
+# /.well-known/jwks.json, which every other service fetches). The file is
+# gitignored; a template lives alongside as jwt-privkey.example.yaml.
+if [ ! -f "$PRIVKEY_MANIFEST" ]; then
+  echo "Generating JWT RS256 private-key Secret manifest..."
   TMP="$(mktemp -d)"
   trap 'rm -rf "$TMP"' EXIT
   openssl genpkey -algorithm RSA -out "$TMP/jwt.key" -pkeyopt rsa_keygen_bits:2048 2>/dev/null
-  openssl rsa -in "$TMP/jwt.key" -pubout -out "$TMP/jwt.pub" 2>/dev/null
 
   kubectl create secret generic jwt-privkey \
     --from-file=jwt.key="$TMP/jwt.key" \
     --dry-run=client -o yaml >"$PRIVKEY_MANIFEST"
 
-  kubectl create configmap jwt-pubkey \
-    --from-file=jwt.pub="$TMP/jwt.pub" \
-    --dry-run=client -o yaml >"$PUBKEY_MANIFEST"
-
   echo "Wrote $PRIVKEY_MANIFEST"
-  echo "Wrote $PUBKEY_MANIFEST"
 else
-  echo "JWT keypair manifests already present; leaving them alone."
+  echo "JWT private-key manifest already present; leaving it alone."
 fi
 
 # Generate per-infra Secret manifests if missing. Each subdir of k8s/base/infra

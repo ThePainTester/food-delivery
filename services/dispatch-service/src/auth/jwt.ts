@@ -1,6 +1,8 @@
 import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 
+import { JwksCache } from "./jwks";
+
 export type Role = "customer" | "restaurant" | "delivery";
 
 export interface Principal {
@@ -16,19 +18,20 @@ declare module "express-serve-static-core" {
 }
 
 export interface JwtConfig {
-  publicKey: Buffer;
+  jwks: JwksCache;
   issuer: string;
 }
 
 export interface RequireAuthOptions {
-  // EventSource cannot send Authorization headers, so SSE routes opt in to
-  // reading the token from `?token=`. Tokens in query strings can leak into
-  // access logs — only enable for SSE endpoints.
+  // EventSource cannot send Authorization headers, so the SSE route opts in
+  // to reading the token from `?token=` as a fallback. The header is still
+  // preferred when present. Tokens in query strings can leak into access
+  // logs — only enable this for the SSE endpoint.
   allowQueryToken?: boolean;
 }
 
 export function requireAuth(cfg: JwtConfig, opts: RequireAuthOptions = {}) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const h = req.header("authorization");
     let token: string | undefined;
     if (h && h.startsWith("Bearer ")) {
@@ -39,8 +42,21 @@ export function requireAuth(cfg: JwtConfig, opts: RequireAuthOptions = {}) {
     if (!token) {
       return res.status(401).json({ error: "unauthorized", message: "missing bearer token" });
     }
+    const decoded = jwt.decode(token, { complete: true });
+    if (!decoded || typeof decoded === "string") {
+      return res.status(401).json({ error: "unauthorized", message: "invalid token" });
+    }
+    let key;
     try {
-      const claims = jwt.verify(token, cfg.publicKey, {
+      key = await cfg.jwks.getKey(decoded.header.kid);
+    } catch {
+      return res.status(401).json({ error: "unauthorized", message: "key resolution failed" });
+    }
+    if (!key) {
+      return res.status(401).json({ error: "unauthorized", message: "unknown signing key" });
+    }
+    try {
+      const claims = jwt.verify(token, key, {
         algorithms: ["RS256"],
         issuer: cfg.issuer,
       }) as jwt.JwtPayload & { user_id?: string; role?: Role };

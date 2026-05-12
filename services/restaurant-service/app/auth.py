@@ -4,6 +4,8 @@ from typing import Literal
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt import PyJWKClient
+from jwt.exceptions import PyJWKClientError
 
 Role = Literal["customer", "restaurant", "delivery"]
 
@@ -29,17 +31,18 @@ def require_auth(
 ) -> Principal:
     if creds is None or creds.scheme.lower() != "bearer":
         raise _unauthorized("missing bearer token")
-    public_key: bytes = request.app.state.jwt_public_key
+    jwks_client: PyJWKClient = request.app.state.jwks_client
     issuer: str = request.app.state.jwt_issuer
     try:
+        signing_key = jwks_client.get_signing_key_from_jwt(creds.credentials)
         claims = jwt.decode(
             creds.credentials,
-            public_key,
+            signing_key.key,
             algorithms=["RS256"],
             issuer=issuer,
             options={"require": ["exp", "iat", "user_id", "role"]},
         )
-    except jwt.PyJWTError:
+    except (jwt.PyJWTError, PyJWKClientError):
         raise _unauthorized("invalid token")
 
     role = claims.get("role")

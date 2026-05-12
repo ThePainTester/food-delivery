@@ -100,7 +100,7 @@ analytics-grade telemetry is left to logs.
 | `DATABASE_URL` | required | |
 | `REDIS_URL` | required | |
 | `RABBIT_URL` | required | |
-| `JWT_PUBLIC_KEY_PATH` | required | |
+| `JWKS_URL` | required | User Service's JWKS endpoint, e.g. `http://user-service:8080/.well-known/jwks.json` |
 | `JWT_ISSUER` | `user-service` | |
 | `OFFER_TIMEOUT_MS` | 12000 | per-driver wait window |
 | `DISPATCH_LOCK_TTL_S` | 60 | lock lifetime |

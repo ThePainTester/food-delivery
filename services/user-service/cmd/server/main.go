@@ -38,7 +38,7 @@ func main() {
 	}
 	defer store.Close()
 
-	signer, err := auth.NewSigner(cfg.JWTPrivateKey, cfg.JWTPublicKey, cfg.JWTIssuer, cfg.JWTTTL)
+	signer, err := auth.NewSigner(cfg.JWTPrivateKey, cfg.JWTIssuer, cfg.JWTTTL)
 	if err != nil {
 		log.Fatalf("jwt: %v", err)
 	}
@@ -52,8 +52,8 @@ func main() {
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.GET("/metrics", observability.MetricsHandler())
-	r.GET("/.well-known/jwks.pem", func(c *gin.Context) {
-		c.Data(http.StatusOK, "application/x-pem-file", cfg.JWTPublicKey)
+	r.GET("/.well-known/jwks.json", func(c *gin.Context) {
+		c.JSON(http.StatusOK, signer.JWKS())
 	})
 
 	authGroup := r.Group("/auth")

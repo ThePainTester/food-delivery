@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { Principal, requireAuth, requireRole } from "../auth/jwt";
+import { JwtConfig, Principal, requireAuth, requireRole } from "../auth/jwt";
 import { OrderStatus } from "../domain/statuses";
 import { badRequest } from "../errors";
 import { minorToDecimal } from "../money";
@@ -70,7 +70,7 @@ function toApi(r: OrderRow) {
 
 interface Deps {
   service: OrdersService;
-  jwt: { publicKey: Buffer; issuer: string };
+  jwt: JwtConfig;
 }
 
 export function ordersRouter(deps: Deps): Router {

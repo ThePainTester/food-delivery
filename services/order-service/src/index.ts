@@ -3,6 +3,7 @@
 import { startTracing, shutdownTracing } from "./observability";
 startTracing();
 
+import { JwksCache } from "./auth/jwks";
 import { RestaurantClient } from "./clients/restaurants";
 import { loadConfig } from "./config";
 import { startConsumers } from "./consumers";
@@ -24,6 +25,9 @@ async function main() {
   const rabbit = new Rabbit(cfg.rabbitUrl, "order-service", "order");
   await rabbit.connect();
 
+  const jwks = new JwksCache(cfg.jwksUrl);
+  await jwks.init();
+
   const restaurants = new RestaurantClient(cfg.restaurantServiceUrl);
   const repo = new OrdersRepo(pool);
   const ordersService = new OrdersService(repo, rabbit, redis, restaurants, cfg.deliveryFeeMinor);
@@ -34,6 +38,7 @@ async function main() {
 
   const app = buildApp({
     cfg,
+    jwt: { jwks, issuer: cfg.jwtIssuer },
     orders: ordersService,
     location: locationService,
     hub: channelHub,

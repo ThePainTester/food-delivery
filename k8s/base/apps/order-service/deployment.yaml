@@ -93,10 +93,6 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: "service.namespace=$(POD_NAMESPACE)"
-          volumeMounts:
-            - name: jwt
-              mountPath: /run/jwt
-              readOnly: true
           readinessProbe:
             httpGet:
               path: /healthz
@@ -116,11 +112,3 @@ spec:
             limits:
               cpu: 500m
               memory: 384Mi
-      volumes:
-        - name: jwt
-          configMap:
-            name: jwt-pubkey
-            defaultMode: 0o444
-            items:
-              - key: jwt.pub
-                path: jwt.pub
