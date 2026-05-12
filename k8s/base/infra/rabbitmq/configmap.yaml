@@ -1,0 +1,10 @@
+# Mounted at /etc/rabbitmq/enabled_plugins. Adds rabbitmq_prometheus
+# (built into the management image but off by default) so the broker
+# self-exposes Prometheus metrics on :15692.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-plugins
+data:
+  enabled_plugins: |
+    [rabbitmq_management,rabbitmq_prometheus].

@@ -171,9 +171,8 @@ celerybeat.pid
 *.aof
 *.pid
 
-# RabbitMQ
+# RabbitMQ (data dirs only — do not ignore source dirs named "rabbitmq")
 mnesia/
-rabbitmq/
 rabbitmq-data/
 
 # ActiveMQ
