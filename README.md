@@ -18,8 +18,8 @@ each other in two ways. Synchronous HTTP for read-after-write paths
 events on RabbitMQ for everything that drives the order lifecycle
 (`order.placed`, `payment.completed`, `order.ready`, `order.delivered`,
 …). Each service owns its database — there is no shared schema and no
-cross-service joins. The frontend is a static SPA served by an in-pod
-NGINX; a separate ingress NGINX sits in front of everything as the
+cross-service joins. The frontend is a static SPA served by an in-container
+NGINX; a separate ingress NGINX/Traefik sits in front of everything as the
 single public entry point. JWTs (RS256) are minted by User Service and
 verified independently by every other service using a public-key
 ConfigMap.
@@ -68,13 +68,13 @@ sequenceDiagram
   RS-->>C: menu items + prices
   C->>OS: POST /orders {items, delivery address}
   OS->>RS: GET /restaurants/{id}/menu (validate + snapshot prices)
-  OS-->>C: 201 order PENDING
-  OS->>MQ: publish order.placed
+  OS-->>C: 201 Created
   C->>PS: POST /payments {order_id, amount, card}
   PS-->>C: 201 payment COMPLETED
   PS->>MQ: publish payment.completed
   MQ-->>OS: payment.completed
-  OS->>OS: mark order paid
+  OS->>OS: DRAFT → PENDING, mark order paid
+  OS->>MQ: publish order.placed
 ```
 
 ### Real-time delivery tracking
@@ -184,8 +184,7 @@ Publishes `order.placed` (on `DRAFT → PENDING`, not on draft creation),
 `order.accepted` (with `pickup_location`), `order.rejected`,
 `order.ready`, `order.picked_up`, `order.delivered`, `order.cancelled`.
 Consumes `payment.pending`, `payment.completed`, `payment.failed`,
-`delivery.assigned` (writes `orders.driver_id` and fans out — the publish
-itself comes from dispatch-service).
+`delivery.assigned`.
 
 ### Payment Service
 
@@ -216,7 +215,7 @@ a no-op log line).
 ### Dispatch Service
 
 Node 20 / TypeScript (Express) on Postgres + Redis. Push-based driver
-assignment. Replaces the previous self-claim lobby. Triggered by
+assignment. Triggered by
 `order.accepted`; runs an offer loop that finds nearby available
 drivers, ranks them by distance, and offers the order to one driver at
 a time with a 12 s window. Postgres `assignments.order_id PK` is the
@@ -230,8 +229,11 @@ sequenceDiagram
   participant MQ as RabbitMQ
   participant DS as Dispatch Service
   participant Redis as dispatch-cache (Redis)
+  participant PG as dispatch-db (Postgres)
   participant R as Rider (SPA)
 
+  Note over R,Redis: Rider is on-duty: periodic POST /dispatch/drivers/heartbeat → GEOADD drivers:available
+  R->>DS: GET /dispatch/drivers/stream (SSE, ?token=)
   OS->>MQ: publish order.accepted (with pickup_location)
   MQ-->>DS: order.accepted (any replica via competing-consumer queue)
   DS->>Redis: SET dispatch:lock:{orderId} NX EX 60
@@ -244,7 +246,7 @@ sequenceDiagram
     DS-->>R: SSE offer event, modal pops
     alt rider accepts
       R->>DS: POST /assignments/{orderId}/accept
-      DS->>DS: INSERT assignments ON CONFLICT DO NOTHING
+      DS->>PG: INSERT assignments ON CONFLICT DO NOTHING
       DS->>Redis: ZREM drivers:available, HSET available=false
       DS->>MQ: publish delivery.assigned
       DS->>Redis: PUBLISH dispatch.responses:{orderId} accepted
@@ -265,16 +267,20 @@ pod aborts immediately and the rider's modal closes).
 
 Single static SPA (`public/app.js` + `index.html`)
 served by NGINX. One UI for all three roles, picked at registration
-time. No build step. Includes a Leaflet map for delivery pickers and
-live tracking; default center is Cairo.
+time. Includes a Leaflet map for delivery pickers and
+live tracking.
 
 ### Infrastructure
 
 RabbitMQ as the only shared piece (topic exchange
-`food_delivery`). Each backend service has its own database
-(`users-db`, `restaurants-db`, `orders-db`, `payments-db`). Redis
-(`orders-cache`) only stores ephemeral rider locations, never
-authoritative state.
+`food_delivery`). Each backend service has its own database — four
+Postgres instances (`users-db`, `orders-db`, `payments-db`,
+`dispatch-db`) and one MongoDB (`restaurants-db`). Two Redis instances,
+each private to one service: `orders-cache` holds ephemeral rider
+locations; `dispatch-cache` holds the driver geo-index, the per-order
+offer locks, and the Pub/Sub channels backing the dispatch SSE stream.
+Neither Redis holds authoritative state — `dispatch-db.assignments` is
+the single authority for who owns an order; Redis is throwaway.
 
 ### Observability
 
@@ -309,14 +315,6 @@ new service can adopt it with the shared `ChannelStreamHub` primitive.
 | order-service | `GET /orders/stream` | Customer order list / order detail / restaurant orders / rider's active deliveries | Order-state changes (`order.placed`, `order.accepted`, `order.ready`, `delivery.assigned`, `order.picked_up`, `order.delivered`, `order.cancelled`, `order.paid`) |
 | order-service | `GET /orders/{id}/location/stream` | Customer's live-tracking map | Driver location fixes for one order |
 | dispatch-service | `GET /dispatch/drivers/stream` | Driver dashboard | Push offers (`{driverId, orderId, pickup, expires_in_s}`) and cancellations (`{type: cancelled}`) |
-
-All SSE routes set the same headers (`Content-Type: text/event-stream`,
-`Cache-Control: no-cache`, `X-Accel-Buffering: no`) and write a `:hb`
-heartbeat every 25 s so idle proxies don't close the connection. The
-nginx Ingress is annotated with `proxy-buffering: off` and a 1 h
-`proxy-read-timeout` so frames are flushed live and long-lived idle
-streams aren't killed. Traefik (Compose) needs no special config — it
-streams responses by default.
 
 `EventSource` can't send an `Authorization` header, so SSE routes opt
 in to a `?token=` query-string fallback (header still preferred when
@@ -467,7 +465,7 @@ browser:
 
 ```bash
 # 1. Clone
-git clone <this-repo> food-delivery && cd food-delivery
+git clone https://github.com/ThePainTester/food-delivery && cd food-delivery
 
 # 2. Per-env env files (one-time)
 cp compose/.env.example compose/.env.dev
@@ -541,10 +539,10 @@ the kustomize tag block into the env file is a reasonable next step.
 
 ## Building Images Locally
 
-You can build images locally and specify a version using `./scripts/build.sh`
+You can build images locally and specify a tag using `./scripts/build.sh`
 
 ```bash
-./scripts/build.sh <service> <version>
+./scripts/build.sh <service> <tag>
 ```
 
 ## Compose Deployment (multi-environment)
