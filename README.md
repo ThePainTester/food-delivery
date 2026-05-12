@@ -330,13 +330,22 @@ new service can adopt it with the shared `ChannelStreamHub` primitive.
 
 The browser's native `EventSource` can't send an `Authorization` header, so
 the SPA consumes these streams over `fetch()` instead — via
-[`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source),
-the only npm dependency the frontend bundles — which lets the JWT ride in the
+[`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source)
+(one of the frontend's bundled deps) — which lets the JWT ride in the
 `Authorization: Bearer …` header like every other request (no token in the
 URL, so nothing leaks into access logs, history, or `Referer`). It also keeps
 the connection open when the tab is backgrounded (`openWhenHidden`) so a
 minimised driver still receives offers, and reconnects with backoff on a
 dropped connection.
+
+On the wire: each stream response sets `Content-Type: text/event-stream`,
+`Cache-Control: no-cache, no-transform`, and `X-Accel-Buffering: no` (the last
+tells nginx to stream this response unbuffered — set per-response by the
+handler, so it touches only the SSE routes, not the JSON API), and the server
+writes a `:hb` comment line every 25 s. The 25 s heartbeat sits comfortably
+under nginx's default 60 s `proxy_read_timeout`, so idle streams aren't
+reaped — no Ingress-wide buffering/timeout annotations are needed. Traefik
+(Compose) streams responses unbuffered by default and needs no config either.
 
 ### Redis Pub/Sub as the fan-out bus
 

@@ -9,6 +9,11 @@
 # into $1 and the rewrite-target annotation prepends `/` so backends receive
 # their native path layout — same as Compose + Traefik's `stripprefix /api`
 # middleware (e.g. user-service mounts routes under /auth and /users).
+# SSE note: no per-route nginx tuning is needed here. The SSE handlers send
+# `X-Accel-Buffering: no` on their own responses (which ingress-nginx honours,
+# disabling buffering for just those responses — no Ingress-wide annotation
+# required), and a 25s `:hb` comment line keeps each stream well under nginx's
+# default 60s `proxy_read_timeout`, so idle streams aren't reaped.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -16,13 +21,6 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$1
-    # SSE: don't buffer responses (keeps each frame from being held until a
-    # buffer fills) and bump the read timeout so idle long-lived streams
-    # aren't killed by the proxy. Customer live-tracking uses
-    # GET /api/orders/<id>/location/stream.
-    nginx.ingress.kubernetes.io/proxy-buffering: "off"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
   ingressClassName: nginx
   rules:
