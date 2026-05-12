@@ -1,0 +1,17 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* Class names live in the SPA source and the HTML shell. (Tailwind v4
+   auto-detects these, but list them explicitly for clarity.) */
+@source "./app.js";
+@source "../public/index.html";
+
+/* App-specific bits that used to sit in index.html's <style>. */
+.leaflet-container {
+  height: 320px;
+  width: 100%;
+  border-radius: 0.5rem;
+}
+[x-cloak] {
+  display: none !important;
+}

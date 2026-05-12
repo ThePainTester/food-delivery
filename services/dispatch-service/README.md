@@ -37,7 +37,7 @@ All routes live under `/dispatch/*` (the gateway forwards
 |---|---|---|---|
 | POST | `/dispatch/drivers/heartbeat` | delivery | `{lat, lon}` — also marks the driver `available`. Posted every ~8s by the driver UI. |
 | POST | `/dispatch/drivers/off` | delivery | Removes the driver from the available pool. |
-| GET  | `/dispatch/drivers/stream` | delivery | SSE — server pushes `{driverId, orderId, pickup, expires_in_s}` offers and `{type: cancelled}` events. EventSource auth via `?token=`. |
+| GET  | `/dispatch/drivers/stream` | delivery | SSE — server pushes `{driverId, orderId, pickup, expires_in_s}` offers and `{type: cancelled}` events. Authenticated with the `Authorization: Bearer` header; the SPA reads it over `fetch()` (`@microsoft/fetch-event-source`), not native `EventSource`. |
 | POST | `/dispatch/assignments/:orderId/accept` | delivery | Postgres INSERT … ON CONFLICT decides; on success runs all side effects (Redis pool, RabbitMQ `delivery.assigned`, broadcast on `dispatch.responses:{orderId}`). |
 | POST | `/dispatch/assignments/:orderId/reject` | delivery | Publishes `{driverId, outcome: rejected}` so the loop falls through to the next driver. |
 | GET  | `/healthz` | – | Liveness/readiness. |

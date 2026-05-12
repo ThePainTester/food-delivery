@@ -28,7 +28,7 @@ interface Deps {
 // by refetching whichever list/order it's currently rendering.
 export function ordersStreamRouter(deps: Deps): Router {
   const r = Router();
-  const auth = requireAuth(deps.jwt, { allowQueryToken: true });
+  const auth = requireAuth(deps.jwt);
 
   r.get("/stream", auth, async (req, res, next) => {
     const principal = req.principal as Principal;

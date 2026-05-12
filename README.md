@@ -238,7 +238,7 @@ sequenceDiagram
   participant R as Rider (SPA)
 
   Note over R,Redis: Rider is on-duty: periodic POST /dispatch/drivers/heartbeat → GEOADD drivers:available
-  R->>DS: GET /dispatch/drivers/stream (SSE, ?token=)
+  R->>DS: GET /dispatch/drivers/stream (SSE, Bearer token)
   OS->>MQ: publish order.accepted (with pickup_location)
   MQ-->>DS: order.accepted (any replica via competing-consumer queue)
   DS->>Redis: SET dispatch:lock:{orderId} NX EX 60
@@ -270,10 +270,17 @@ pod aborts immediately and the rider's modal closes).
 
 ### Frontend
 
-Single static SPA (`public/app.js` + `index.html`)
-served by NGINX. One UI for all three roles, picked at registration
-time. Includes a Leaflet map for delivery pickers and
-live tracking.
+Single SPA (`src/app.js` + `src/styles.css` + `public/index.html`) served by
+NGINX. One UI for all three roles, picked at registration time. Includes a
+Leaflet map for delivery pickers and live tracking. `npm run build` does two
+things: esbuild bundles `src/app.js` and its deps — `leaflet` and
+`@microsoft/fetch-event-source` — into `dist/app.js` (a single IIFE, with
+Leaflet's marker images emitted alongside as hashed assets), and the
+Tailwind v4 CLI compiles `src/styles.css` (Tailwind + Leaflet's stylesheet)
+into a tree-shaken `dist/styles.css`. The Dockerfile runs this; the NGINX
+image serves `public/index.html` + `dist/*`. No third-party CDNs at runtime
+(the in-browser Tailwind JIT is gone — that build is explicitly not for
+production); only OpenStreetMap *tiles* are fetched from outside.
 
 ### Infrastructure
 
@@ -321,9 +328,15 @@ new service can adopt it with the shared `ChannelStreamHub` primitive.
 | order-service | `GET /orders/{id}/location/stream` | Customer's live-tracking map | Driver location fixes for one order |
 | dispatch-service | `GET /dispatch/drivers/stream` | Driver dashboard | Push offers (`{driverId, orderId, pickup, expires_in_s}`) and cancellations (`{type: cancelled}`) |
 
-`EventSource` can't send an `Authorization` header, so SSE routes opt
-in to a `?token=` query-string fallback (header still preferred when
-present).
+The browser's native `EventSource` can't send an `Authorization` header, so
+the SPA consumes these streams over `fetch()` instead — via
+[`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source),
+the only npm dependency the frontend bundles — which lets the JWT ride in the
+`Authorization: Bearer …` header like every other request (no token in the
+URL, so nothing leaks into access logs, history, or `Referer`). It also keeps
+the connection open when the tab is backgrounded (`openWhenHidden`) so a
+minimised driver still receives offers, and reconnects with backoff on a
+dropped connection.
 
 ### Redis Pub/Sub as the fan-out bus
 
@@ -420,7 +433,7 @@ food-delivery/
 │   ├── order-service/           # Node/TS + Express + Postgres + Redis
 │   ├── payment-service/         # Go + Gin + Postgres
 │   ├── dispatch-service/        # Node/TS + Express + Postgres + Redis
-│   └── frontend/                # NGINX serving a static SPA
+│   └── frontend/                # SPA (src/ → esbuild + tailwind → dist/), served by NGINX
 ├── compose/                     # Docker Compose stack
 │   ├── docker-compose.yml       # base topology
 │   ├── docker-compose.dev.yml   # build images, expose all ports

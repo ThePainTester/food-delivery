@@ -1,6 +1,26 @@
 // Minimal vanilla SPA. Hash router, role-based views, JWT in localStorage.
 // All API calls hit same-origin /api/* — NGINX in front of us proxies to the
 // correct backend service.
+//
+// Bundled with esbuild (`npm run build` → dist/app.js, IIFE). Deps:
+//   - @microsoft/fetch-event-source — SSE over fetch() so the JWT rides in the
+//     Authorization header instead of a `?token=` query string.
+//   - leaflet — maps; bundled (no CDN). Styles come from dist/styles.css.
+
+import { fetchEventSource } from "@microsoft/fetch-event-source";
+import L from "leaflet";
+import markerIconUrl from "leaflet/dist/images/marker-icon.png";
+import markerIcon2xUrl from "leaflet/dist/images/marker-icon-2x.png";
+import markerShadowUrl from "leaflet/dist/images/marker-shadow.png";
+
+// Leaflet derives its default marker-icon URLs from the script's own location,
+// which is wrong under a bundler. Point it at the assets esbuild emitted.
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconUrl: markerIconUrl,
+  iconRetinaUrl: markerIcon2xUrl,
+  shadowUrl: markerShadowUrl,
+});
 
 // ---------- auth store ------------------------------------------------------
 
@@ -49,6 +69,31 @@ async function api(method, path, body) {
     throw err;
   }
   return data;
+}
+
+// ---------- SSE client ------------------------------------------------------
+// Reads a Server-Sent Events stream over fetch() (via fetch-event-source) so
+// the Bearer token goes in the Authorization header — native EventSource can't
+// set headers. Reconnects automatically (the library's default). Returns a
+// handle whose .close() aborts the stream; the call sites still treat it like
+// the old EventSource object.
+function startSSE(path, { query = '', onMessage } = {}) {
+  const ctl = new AbortController();
+  const qs = query ? `?${query}` : '';
+  const t = getToken();
+  fetchEventSource(`/api${path}${qs}`, {
+    headers: t ? { Authorization: `Bearer ${t}` } : {},
+    signal: ctl.signal,
+    // Keep streaming even when the tab is hidden (a backgrounded driver
+    // must still receive offers); matches EventSource's behaviour.
+    openWhenHidden: true,
+    onmessage(ev) {
+      if (!ev.data) return; // skip `:hb` comment heartbeats
+      try { onMessage(ev.data); } catch { /* ignore malformed frames */ }
+    },
+    onerror() { /* swallow → fetch-event-source retries with backoff */ },
+  }).catch(() => { /* aborted via ctl.abort() */ });
+  return { close() { ctl.abort(); } };
 }
 
 const API = {
@@ -533,25 +578,20 @@ function pollSilently(fn) {
   return () => { fn().catch(() => { }); };
 }
 
-// Subscribe to /orders/stream. The query string is appended to the URL
-// after the auth token (use it to pass restaurant_id for restaurant role).
-// onMessage receives the parsed envelope; pass `idFilter` to react only to
-// events for one order id (single-order views).
+// Subscribe to /orders/stream. `query` is passed through as the query string
+// (use it to pass restaurant_id for the restaurant role). `idFilter` reacts
+// only to events for one order id (single-order views).
 function openOrdersStream({ query = '', idFilter = null } = {}, refresh) {
-  const token = encodeURIComponent(getToken() || '');
-  const qs = query ? `&${query}` : '';
-  const url = `/api/orders/stream?token=${token}${qs}`;
   if (ordersStream) ordersStream.close();
-  ordersStream = new EventSource(url);
   const safeRefresh = pollSilently(refresh);
-  ordersStream.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
+  ordersStream = startSSE('/orders/stream', {
+    query,
+    onMessage: (raw) => {
+      const data = JSON.parse(raw);
       if (idFilter && data.order_id !== idFilter) return;
       safeRefresh();
-    } catch { /* ignore malformed frames */ }
-  };
-  // EventSource auto-reconnects on transient errors; nothing to do here.
+    },
+  });
 }
 
 async function viewCustomerOrder(id) {
@@ -649,24 +689,15 @@ function startCustomerTracking(orderId, destination) {
   document.getElementById('map-note').textContent = 'Live tracking via SSE.';
   if (destination) ensureMap('map', null, destination);
 
-  // EventSource can't set Authorization headers, so the order-service
-  // route also accepts the token on `?token=` for this endpoint.
-  const token = encodeURIComponent(getToken() || '');
-  const url = `/api/orders/${orderId}/location/stream?token=${token}`;
   if (trackEventSource) trackEventSource.close();
-  trackEventSource = new EventSource(url);
-  trackEventSource.onmessage = (ev) => {
-    try {
-      const loc = JSON.parse(ev.data);
+  trackEventSource = startSSE(`/orders/${orderId}/location/stream`, {
+    onMessage: (raw) => {
+      const loc = JSON.parse(raw);
       if (loc && loc.latitude != null) {
         ensureMap('map', { lat: loc.latitude, lng: loc.longitude }, destination);
       }
-    } catch { /* ignore malformed frames */ }
-  };
-  trackEventSource.onerror = () => {
-    // Browser auto-reconnects on transient errors; nothing to do here
-    // unless we want to surface a stale-data badge.
-  };
+    },
+  });
 }
 
 // ---------- views: restaurant ----------------------------------------------
@@ -935,11 +966,9 @@ function stopDispatchPresence() {
 // expires_in_s} when this driver wins the loop's current iteration.
 function openDispatchStream() {
   closeDispatchStream();
-  const token = encodeURIComponent(getToken() || '');
-  dispatchStream = new EventSource(`/api/dispatch/drivers/stream?token=${token}`);
-  dispatchStream.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
+  dispatchStream = startSSE('/dispatch/drivers/stream', {
+    onMessage: (raw) => {
+      const data = JSON.parse(raw);
       if (data.type === 'cancelled') {
         closeOfferModal();
         return;
@@ -947,8 +976,8 @@ function openDispatchStream() {
       if (data.orderId && data.expires_in_s) {
         showOfferModal(data);
       }
-    } catch { /* ignore malformed */ }
-  };
+    },
+  });
 }
 
 function closeDispatchStream() {

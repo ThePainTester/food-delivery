@@ -30,10 +30,6 @@ interface Deps {
 export function locationRouter(deps: Deps): Router {
   const r = Router();
   const auth = requireAuth(deps.jwt);
-  // SSE handshake can't carry an Authorization header (EventSource API
-  // doesn't support custom headers), so this one route also accepts the
-  // token via `?token=` for the customer's live-tracking stream.
-  const authStream = requireAuth(deps.jwt, { allowQueryToken: true });
 
   r.post("/:id/location", auth, async (req, res, next) => {
     try {
@@ -55,7 +51,7 @@ export function locationRouter(deps: Deps): Router {
     }
   });
 
-  r.get("/:id/location/stream", authStream, async (req, res, next) => {
+  r.get("/:id/location/stream", auth, async (req, res, next) => {
     const orderId = req.params.id;
     try {
       await deps.service.authorizeStream(orderId, userActor(req.principal!));

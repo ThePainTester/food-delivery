@@ -15,7 +15,7 @@ interface Deps {
 // matching offers locally on this channel.
 export function driverStreamRouter(deps: Deps): Router {
   const r = Router();
-  const auth = requireAuth(deps.jwt, { allowQueryToken: true });
+  const auth = requireAuth(deps.jwt);
 
   r.get("/stream", auth, requireRole("delivery"), async (req, res, next) => {
     const principal = req.principal as Principal;
