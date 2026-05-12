@@ -242,10 +242,10 @@ sequenceDiagram
   OS->>MQ: publish order.accepted (with pickup_location)
   MQ-->>DS: order.accepted (any replica via competing-consumer queue)
   DS->>Redis: SET dispatch:lock:{orderId} NX EX 60
+  Note over DS,Redis: lock renewed at ~½ TTL while the loop runs (compare-and-extend Lua)
   DS->>Redis: GEOSEARCH drivers:available BYRADIUS pickup 3km
   DS->>Redis: HMGET driver:{id} (filter stale / not available)
   loop each ranked driver, ≤12s window
-    DS->>Redis: SADD order:{orderId}:offered_drivers driver
     DS->>Redis: PUBLISH dispatch.offers {driverId, orderId, pickup}
     Redis-->>DS: every replica receives, only the one holding this driver's SSE delivers
     DS-->>R: SSE offer event, modal pops

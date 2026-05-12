@@ -15,10 +15,6 @@ export function dispatchLockKey(orderId: string): string {
   return `dispatch:lock:${orderId}`;
 }
 
-export function offeredDriversKey(orderId: string): string {
-  return `order:${orderId}:offered_drivers`;
-}
-
 export function responsesChannel(orderId: string): string {
   return `dispatch.responses:${orderId}`;
 }

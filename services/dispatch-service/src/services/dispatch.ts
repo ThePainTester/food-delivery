@@ -7,11 +7,7 @@ import {
   dispatchOffersOffered,
 } from "../observability";
 import { Rabbit } from "../rabbit";
-import {
-  OFFERS_CHANNEL,
-  offeredDriversKey,
-  responsesChannel,
-} from "../redis";
+import { OFFERS_CHANNEL, responsesChannel } from "../redis";
 import { findByDistance, LatLon } from "./candidates";
 
 export type Outcome = "accepted" | "rejected" | "timeout" | "cancelled";
@@ -77,14 +73,10 @@ export class DispatchService {
       await subscriber.subscribe(channel);
 
       let cancelled = false;
-      let lastOfferedDriver: string | undefined;
 
       for (const d of ranked) {
         if (cancelled) break;
-        const fresh = await redis.sadd(offeredDriversKey(orderId), d.id);
-        if (fresh === 0) continue;
 
-        lastOfferedDriver = d.id;
         await redis.publish(
           OFFERS_CHANNEL,
           JSON.stringify({
@@ -116,7 +108,6 @@ export class DispatchService {
         await rabbit.publish("dispatch.no_drivers", { order_id: orderId });
         logger.info({ orderId }, "dispatch exhausted candidates");
       }
-      void lastOfferedDriver;
     } finally {
       subscriber.disconnect();
     }

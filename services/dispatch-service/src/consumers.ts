@@ -4,11 +4,7 @@ import { Config } from "./config";
 import { logger } from "./logger";
 import { dispatchLockContention } from "./observability";
 import { Envelope, Rabbit } from "./rabbit";
-import {
-  dispatchLockKey,
-  offeredDriversKey,
-  responsesChannel,
-} from "./redis";
+import { dispatchLockKey, responsesChannel } from "./redis";
 import { DispatchService } from "./services/dispatch";
 
 interface OrderAcceptedData {
@@ -21,9 +17,20 @@ interface OrderCancelledData {
   order_id: string;
 }
 
+// Compare-and-delete: only release the lock if it's still ours (the TTL may
+// have lapsed and another pod taken it — don't delete someone else's lock).
 const RELEASE_LOCK_LUA = `
 if redis.call("get", KEYS[1]) == ARGV[1]
   then return redis.call("del", KEYS[1])
+  else return 0
+end
+`;
+
+// Compare-and-extend: refresh the TTL only while we still own the lock.
+// Returns 1 on success, 0 if the lock is gone or now held by another pod.
+const RENEW_LOCK_LUA = `
+if redis.call("get", KEYS[1]) == ARGV[1]
+  then return redis.call("expire", KEYS[1], ARGV[2])
   else return 0
 end
 `;
@@ -49,15 +56,30 @@ export async function startConsumers(
         logger.info({ order_id: d.order_id }, "another pod holds the dispatch lock");
         return;
       }
+
+      // Renew the lock at ~half the TTL so it outlives the offer loop no
+      // matter how long it runs (lots of drivers each timing out). The lock
+      // then only truly lapses if this pod dies — at which point another pod
+      // can re-trigger the order; the Postgres unique key still prevents a
+      // double assignment regardless.
+      const renewMs = Math.max(1, Math.floor(cfg.dispatchLockTtlS / 2)) * 1000;
+      const renew = setInterval(() => {
+        redis
+          .eval(RENEW_LOCK_LUA, 1, lockKey, cfg.instanceId, String(cfg.dispatchLockTtlS))
+          .then((r) => {
+            if (r !== 1) logger.warn({ order_id: d.order_id }, "dispatch lock not renewed (lost?)");
+          })
+          .catch((err) => logger.warn({ err, order_id: d.order_id }, "dispatch lock renewal failed"));
+      }, renewMs);
+      renew.unref?.();
+
       try {
         await dispatch.run(d.order_id, pickup);
       } catch (err) {
         logger.error({ err, order_id: d.order_id }, "dispatch loop failed");
       } finally {
-        await redis
-          .eval(RELEASE_LOCK_LUA, 1, lockKey, cfg.instanceId)
-          .catch(() => {});
-        await redis.del(offeredDriversKey(d.order_id)).catch(() => {});
+        clearInterval(renew);
+        await redis.eval(RELEASE_LOCK_LUA, 1, lockKey, cfg.instanceId).catch(() => {});
       }
       return;
     }
@@ -70,8 +92,6 @@ export async function startConsumers(
         responsesChannel(d.order_id),
         JSON.stringify({ outcome: "cancelled" }),
       );
-      // Also clear the offered set so a later re-trigger starts fresh.
-      await redis.del(offeredDriversKey(d.order_id)).catch(() => {});
       logger.info({ order_id: d.order_id }, "broadcast cancellation");
     }
   });

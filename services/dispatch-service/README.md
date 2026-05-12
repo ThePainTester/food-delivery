@@ -13,14 +13,25 @@ picks up the message tries to acquire a Redis lock and runs the loop.
 
 ```
 SET dispatch:lock:{orderId} <instanceId> NX EX 60   ← exclusive ownership
+                                                      (renewed at ~½ TTL while
+                                                       the loop runs — Lua
+                                                       compare-and-extend)
 GEOSEARCH drivers:available BYRADIUS pickup 3km ASC ← spatial candidates
 filter (HMGET driver:{id} available last_seen)      ← drop stale/off
 for driver in ranked:
-  SADD order:{orderId}:offered_drivers driver       ← per-cycle dedupe
   PUBLISH dispatch.offers {driverId, orderId, …}    ← broadcast
   await dispatch.responses:{orderId} (≤12s)         ← per-order channel
   if accepted: stop
 ```
+
+The lock is renewed every ~`DISPATCH_LOCK_TTL_S/2` seconds (a Lua
+compare-and-extend: bump the TTL only if the value is still ours), so a long
+loop — many candidates, each timing out — never outlives the lock. The lock
+therefore only lapses if the pod *dies*; another pod can then re-trigger the
+order, and Postgres uniqueness still prevents any double assignment. (There's
+no separate "already offered" dedupe set: the loop walks a de-duplicated ranked
+list exactly once, and the only thing that decides a winner is the Postgres
+unique key — so it isn't needed.)
 
 Postgres `assignments.order_id PK` + `INSERT … ON CONFLICT DO NOTHING` is
 the only mechanism that decides a winner. Concurrent accepts hit the same
@@ -50,8 +61,7 @@ All routes live under `/dispatch/*` (the gateway forwards
 |---|---|---|
 | `drivers:available` | GEOSET | Lon/lat per driver. `GEOADD` on heartbeat; `ZREM` on accept/off. |
 | `driver:{id}` | HASH | `lat`, `lon`, `available`, `last_seen` (epoch ms). Filtered against `HEARTBEAT_STALE_MS`. |
-| `dispatch:lock:{orderId}` | string + EX 60 | Loop ownership. Compare-and-delete via Lua so a TTL-expired lock acquired by another pod isn't clobbered on release. |
-| `order:{orderId}:offered_drivers` | SET | Best-effort dedupe within a single dispatch cycle. Not load-bearing. |
+| `dispatch:lock:{orderId}` | string + EX `DISPATCH_LOCK_TTL_S` | Loop ownership. Renewed at ~½ TTL while the loop runs (Lua compare-and-extend) and released with a Lua compare-and-delete, so a TTL-expired lock acquired by another pod is never clobbered. |
 | `dispatch.offers` | pubsub | Broadcast offer fan-in. Every pod subscribes; only the pod that holds the destination driver's SSE delivers. |
 | `dispatch.responses:{orderId}` | pubsub | Accept/reject signal back to the loop's pod. |
 
@@ -84,7 +94,9 @@ analytics-grade telemetry is left to logs.
 
 - The trigger queue is competing-consumer; any replica may take the
   message.
-- The Redis lock guarantees only one pod runs a loop per order.
+- The Redis lock guarantees only one pod runs a loop per order, and it's
+  renewed while the loop runs so it can't lapse mid-loop and let a second pod
+  start a competing loop.
 - The accept HTTP endpoint can land on any pod. Postgres uniqueness
   enforces the single-writer rule even when accept and the loop are on
   different pods.
