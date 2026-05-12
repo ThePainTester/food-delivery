@@ -10,22 +10,22 @@ resources:
 images:
   - name: food-delivery/user-service
     newName: ghcr.io/thepaintester/user-service
-    newTag: v1.1.0
+    newTag: v2.0.0
   - name: food-delivery/restaurant-service
     newName: ghcr.io/thepaintester/restaurant-service
-    newTag: v1.1.0
+    newTag: v2.0.0
   - name: food-delivery/order-service
     newName: ghcr.io/thepaintester/order-service
-    newTag: v3.0.0
+    newTag: v4.0.0
   - name: food-delivery/payment-service
     newName: ghcr.io/thepaintester/payment-service
-    newTag: v2.0.0
+    newTag: v3.0.0
   - name: food-delivery/dispatch-service
     newName: ghcr.io/thepaintester/dispatch-service
-    newTag: v1.0.0
+    newTag: v2.0.0
   - name: food-delivery/frontend
     newName: ghcr.io/thepaintester/frontend
-    newTag: v1.3.0
+    newTag: v1.4.0
 
 patches:
   - path: patches/resources.yaml

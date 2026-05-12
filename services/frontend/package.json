@@ -1,6 +1,6 @@
 {
   "name": "frontend",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "private": true,
   "description": "SPA: esbuild bundles src/app.js (+ Leaflet, fetch-event-source) into dist/app.js; the Tailwind v4 CLI compiles src/styles.css into dist/styles.css.",
   "scripts": {
